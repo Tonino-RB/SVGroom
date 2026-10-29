@@ -2,6 +2,7 @@ import SwiftUI
 
 struct SidebarView: View {
     @Environment(Library.self) private var library
+    @State private var arrowMonitor: Any?
 
     var body: some View {
         @Bindable var library = library
@@ -23,6 +24,25 @@ struct SidebarView: View {
             }
         }
         .listStyle(.sidebar)
+        // Arrows always browse the SVGs, never the folder list: catch them before the list does.
+        .onAppear {
+            arrowMonitor = NSEvent.addLocalMonitorForEvents(matching: .keyDown) { event in
+                let key = event.keyCode, plain = event.modifierFlags.isDisjoint(with: [.command, .option, .control])
+                let handled = MainActor.assumeIsolated { () -> Bool in
+                    guard plain, NSApp.keyWindow?.firstResponder is NSTableView else { return false }
+                    switch key {
+                    case 123: library.moveFocus(by: -1)
+                    case 124: library.moveFocus(by: 1)
+                    case 126: library.moveFocus(by: -library.rowStep)
+                    case 125: library.moveFocus(by: library.rowStep)
+                    default: return false
+                    }
+                    return true
+                }
+                return handled ? nil : event
+            }
+        }
+        .onDisappear { if let arrowMonitor { NSEvent.removeMonitor(arrowMonitor) } }
         .safeAreaInset(edge: .bottom) {
             HStack {
                 Button { library.addFolderPanel() } label: { Label("Add Folder", systemImage: "plus") }

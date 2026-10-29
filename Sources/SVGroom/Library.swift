@@ -47,7 +47,7 @@ final class Library {
     private(set) var analysisPending = 0
 
     // MARK: Browsing
-    var source: SidebarSource? = .all { didSet { if oldValue != source { refreshDisplay() } } }
+    var source: SidebarSource? = .all { didSet { if oldValue != source { sourceChanged(from: oldValue) } } }
     var includeSubfolders = true { didSet { refreshDisplay() } }
     var filter = Filter() { didSet { if oldValue != filter { refreshDisplay() } } }
     var sort = SortKey.name { didSet { refreshDisplay() } }
@@ -83,6 +83,8 @@ final class Library {
     @ObservationIgnored var gridColumns = 1
     @ObservationIgnored private var pathIndex: [String: UUID] = [:]
     @ObservationIgnored private var displayIndex: [UUID: Int] = [:]
+    /// The file last focused in each sidebar source, restored when coming back to it.
+    @ObservationIgnored private var lastFocus: [SidebarSource: UUID] = [:]
     @ObservationIgnored private var saveTask: Task<Void, Never>?
     @ObservationIgnored private let saveQueue = DispatchQueue(label: "SVGroom.catalog-save")
     @ObservationIgnored private var rescanRequested = false
@@ -166,6 +168,7 @@ final class Library {
             selection = []
             focusedID = nil
             source = .all
+            lastFocus = [:]
             rebuildTree()
             refreshDisplay()
             rescan()
@@ -540,6 +543,15 @@ final class Library {
         scheduleAnalysis()
     }
 
+    /// A new source opens on its first file, or on the one left focused there last time.
+    private func sourceChanged(from old: SidebarSource?) {
+        if let old { lastFocus[old] = focusedID }
+        focusedID = nil
+        selection = []
+        refreshDisplay()
+        if let id = source.flatMap({ lastFocus[$0] }), displayIndex[id] != nil { focus(id) }
+    }
+
     private static func compare<T: Comparable>(_ a: T, _ b: T) -> ComparisonResult {
         a < b ? .orderedAscending : (a > b ? .orderedDescending : .orderedSame)
     }
@@ -596,6 +608,9 @@ final class Library {
             focus(id)
         }
     }
+
+    /// How far up/down arrows move: a whole row in the grid, one file elsewhere.
+    var rowStep: Int { viewMode == .grid && previewMode == .normal ? gridColumns : 1 }
 
     func moveFocus(by delta: Int) {
         guard !displayed.isEmpty else { return }

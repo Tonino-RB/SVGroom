@@ -32,6 +32,7 @@ struct BrowserView: View {
             .onAppear { keyFocus = true }
             .onChange(of: library.viewMode) { keyFocus = true }
             .onChange(of: library.previewMode) { keyFocus = true }
+            .onChange(of: library.source) { keyFocus = true }
         }
         .toolbar {
             ToolbarItemGroup {
@@ -78,7 +79,7 @@ struct BrowserView: View {
             if press.characters == "a" { library.selectAll(); return .handled }
             return .ignored
         }
-        let rowStep = library.viewMode == .grid && library.previewMode == .normal ? library.gridColumns : 1
+        let rowStep = library.rowStep
         // Holding an arrow keeps sliding; other keys act once per press.
         let arrows: [KeyEquivalent] = [.leftArrow, .rightArrow, .upArrow, .downArrow]
         if press.phase == .repeat && !arrows.contains(press.key) { return .ignored }
