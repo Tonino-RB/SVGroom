@@ -66,8 +66,9 @@ private struct MetadataEditor: View {
             HStack(spacing: 14) {
                 Button { library.setFlag(flag == .picked ? .none : .picked) } label: {
                     Label("Pick", systemImage: flag == .picked ? "flag.fill" : "flag")
+                        .foregroundStyle(flag == .picked ? .green : .primary)
                 }
-                .help("Picked (P)")
+                .help("Picked (P or W)")
                 Button { library.setFlag(flag == .rejected ? .none : .rejected) } label: {
                     Label("Reject", systemImage: flag == .rejected ? "xmark.circle.fill" : "xmark.circle")
                         .foregroundStyle(flag == .rejected ? .red : .primary)

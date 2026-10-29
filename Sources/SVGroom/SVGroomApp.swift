@@ -58,7 +58,7 @@ struct AppCommands: Commands {
                 }
             }
             Menu("Set Flag") {
-                Button("Picked   (P)") { library.setFlag(.picked) }
+                Button("Picked   (P or W)") { library.setFlag(.picked) }
                 Button("Rejected   (X)") { library.setFlag(.rejected) }
                 Button("Unflagged   (U)") { library.setFlag(.none) }
             }

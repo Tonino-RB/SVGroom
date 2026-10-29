@@ -94,7 +94,7 @@ struct FlagIcon: View {
     var body: some View {
         switch flag {
         case .none: EmptyView()
-        case .picked: Image(systemName: "flag.fill").foregroundStyle(.primary)
+        case .picked: Image(systemName: "flag.fill").foregroundStyle(.green)
         case .rejected: Image(systemName: "xmark.circle.fill").foregroundStyle(.red)
         }
     }

@@ -89,7 +89,7 @@ struct BrowserView: View {
         case "7": library.toggleLabel(.yellow, advance: true)
         case "8": library.toggleLabel(.green, advance: true)
         case "9": library.toggleLabel(.blue, advance: true)
-        case "p": library.setFlag(.picked, advance: true)
+        case "p", "w": library.setFlag(.picked, advance: true)
         case "x": library.setFlag(.rejected, advance: true)
         case "u": library.setFlag(.none, advance: true)
         case "g": library.viewMode = .grid
