@@ -5,6 +5,7 @@ A Lightroom-style library for SVG files, made for pen-plotter work. Native macOS
 - **Catalog**: one `.svgroom` file, stored wherever you choose (File › New Catalog…). It holds ratings, flags, color labels, file locations and cached analysis.
 - **Folders**: File › Add Folder… (⇧⌘I), or drag folders onto the sidebar. Subfolders are included.
 - **Culling**: stars, pick/reject flags, color labels; filter by rating, flag, label, paper format and name.
+- **Linked folders**: right-click a folder › Link With… to pick folders with the same structure (e.g. one export at several settings). A rating, flag or label set on a file is also set on the file at the same relative path in every linked folder. Right-click › Unlink to stop.
 - **Plotter info**: size in mm, paper format (A0–A6, B3–B5, Letter, Legal, Tabloid), Inkscape layers with pen colour, estimated plot time, pen-down / pen-up distances, pen lifts, margins, and warnings (off-page content, text, bitmaps).
 - **Layers**: the eye toggles in the inspector hide or show layers in the preview and in the time estimate. The file itself is never modified.
 - **Broken links**: moved or renamed files are found again (bookmarks, then name + size). Folders that can't be found show in red: right-click › Locate Folder…. Missing files are listed under *Missing Files*, with Locate… and File › Find Missing Files in Folder… (matches by name + size, then by content hash).

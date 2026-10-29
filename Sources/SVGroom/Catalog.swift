@@ -14,6 +14,8 @@ enum ColorLabel: String, Codable, CaseIterable {
 struct CatalogFile: Codable {
     var version = 1
     var roots: [RootFolder]
+    /// Linked folder groups (absent in older catalogs).
+    var links: [[String]]?
     var entries: [Entry]
 }
 

@@ -38,6 +38,8 @@ final class Library {
     var catalogProblem: String?
     private(set) var roots: [RootFolder] = []
     private(set) var missingRoots: Set<UUID> = []
+    /// Folders that share ratings, flags and labels by relative path.
+    private(set) var links: [[String]] = []
     private(set) var items: [UUID: SVGItem] = [:]
     private(set) var folderTree: [FolderNode] = []
     private(set) var missingCount = 0
@@ -150,6 +152,7 @@ final class Library {
             catalogProblem = nil
             UserDefaults.standard.set(url.path, forKey: Self.lastCatalogKey)
             roots = file.roots
+            links = file.links ?? []
             missingRoots = []
             items = Dictionary(file.entries.map { ($0.id, SVGItem($0)) }, uniquingKeysWith: { a, _ in a })
             pathIndex = Dictionary(items.values.map { ($0.path, $0.id) }, uniquingKeysWith: { a, _ in a })
@@ -182,7 +185,7 @@ final class Library {
         saveTask?.cancel()
         saveTask = nil
         guard let url = catalogURL else { return }
-        let file = CatalogFile(roots: roots, entries: items.values.map(\.entry))
+        let file = CatalogFile(roots: roots, links: links, entries: items.values.map(\.entry))
         let work = {
             do {
                 try JSONEncoder().encode(file).write(to: url, options: .atomic)
@@ -233,6 +236,7 @@ final class Library {
         let prefix = root.path + "/"
         for item in items.values where item.path.hasPrefix(prefix) { removeItem(item) }
         roots.removeAll { $0.id == root.id }
+        links = links.map { $0.filter { $0 != root.path && !$0.hasPrefix(prefix) } }.filter { $0.count > 1 }
         if case .folder(let p)? = source, p == root.path || p.hasPrefix(prefix) { source = .all }
         catalogChanged()
     }
@@ -256,9 +260,34 @@ final class Library {
         }
         roots[i].path = newPath
         roots[i].bookmark = try? URL(fileURLWithPath: newPath).bookmarkData()
+        links = links.map { $0.map { $0 == old || $0.hasPrefix(old + "/") ? newPath + $0.dropFirst(old.count) : $0 } }
         missingRoots.remove(root.id)
         if source == .folder(old) { source = .folder(newPath) }
         catalogChanged()
+    }
+
+    // MARK: - Linked folders
+
+    func linkFolderPanel(_ path: String) {
+        let panel = NSOpenPanel()
+        panel.title = "Link “\((path as NSString).lastPathComponent)” With…"
+        panel.message = "Ratings, flags and labels set on a file are also set on the file at the same place in the linked folders."
+        panel.canChooseFiles = false
+        panel.canChooseDirectories = true
+        panel.allowsMultipleSelection = true
+        panel.directoryURL = URL(fileURLWithPath: (path as NSString).deletingLastPathComponent)
+        guard panel.runModal() == .OK else { return }
+        links = FolderLinks.link(path, with: panel.urls.map(\.standardizedFileURL.path), in: links)
+        markDirty()
+    }
+
+    func unlinkFolder(_ path: String) {
+        links = FolderLinks.unlink(path, in: links)
+        markDirty()
+    }
+
+    func linkedFolders(of path: String) -> [String] {
+        links.first { $0.contains(path) }?.filter { $0 != path } ?? []
     }
 
     // MARK: - Scanning
@@ -584,7 +613,13 @@ final class Library {
     private func applyMetadata(advance: Bool, _ change: (SVGItem) -> Void) {
         let targets = targetItems
         guard !targets.isEmpty else { return }
-        for item in targets {
+        // The same files in linked folders get the same change.
+        var all = targets
+        var ids = Set(targets.map(\.id))
+        for path in targets.flatMap({ FolderLinks.counterparts(of: $0.path, in: links) }) {
+            if let id = pathIndex[path], ids.insert(id).inserted, let item = items[id] { all.append(item) }
+        }
+        for item in all {
             change(item)
             item.makeBookmarkIfNeeded()
         }

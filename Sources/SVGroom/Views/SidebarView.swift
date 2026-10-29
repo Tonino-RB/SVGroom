@@ -48,18 +48,26 @@ private struct FolderRow: View {
 
     var body: some View {
         let root = library.root(at: node.path)
+        let linked = library.linkedFolders(of: node.path)
         Label {
-            Text(node.name).foregroundStyle(node.missing ? .red : .primary)
+            HStack(spacing: 4) {
+                Text(node.name).foregroundStyle(node.missing ? .red : .primary)
+                if !linked.isEmpty { Image(systemName: "link").foregroundStyle(.secondary).imageScale(.small) }
+            }
         } icon: {
             Image(systemName: node.missing ? "folder.badge.questionmark" : "folder")
         }
         .badge(node.count)
-        .help(node.missing ? "Folder not found: \(node.path)" : node.path)
+        .help(node.missing ? "Folder not found: \(node.path)"
+              : linked.isEmpty ? node.path : node.path + "\n\nLinked with:\n" + linked.joined(separator: "\n"))
         .contextMenu {
             if !node.missing {
                 Button("Show in Finder") { NSWorkspace.shared.activateFileViewerSelecting([URL(fileURLWithPath: node.path)]) }
                 Button("Synchronize") { library.rescan() }
             }
+            Divider()
+            Button("Link With…") { library.linkFolderPanel(node.path) }
+            if !linked.isEmpty { Button("Unlink") { library.unlinkFolder(node.path) } }
             if let root {
                 Divider()
                 Button("Locate Folder…") { library.locateRootPanel(root) }
