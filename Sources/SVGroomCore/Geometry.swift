@@ -5,6 +5,14 @@ struct Point {
     var y: Double
 
     func distance(to p: Point) -> Double { ((p.x - x) * (p.x - x) + (p.y - y) * (p.y - y)).squareRoot() }
+
+    /// Distance to the segment from `a` to `b`.
+    func distance(toSegment a: Point, _ b: Point) -> Double {
+        let dx = b.x - a.x, dy = b.y - a.y, len2 = dx * dx + dy * dy
+        guard len2 > 0 else { return distance(to: a) }
+        let t = max(0, min(1, ((x - a.x) * dx + (y - a.y) * dy) / len2))
+        return distance(to: Point(x: a.x + t * dx, y: a.y + t * dy))
+    }
 }
 
 /// 2D affine transform, SVG `matrix(a b c d e f)` convention.

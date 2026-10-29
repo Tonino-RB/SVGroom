@@ -66,7 +66,6 @@ private struct GridCell: View {
     let size: Double
     let selected: Bool
     let focused: Bool
-    private let plot = PlotSettingsStorage()
     @State private var thumb: NSImage?
     @State private var thumbLoaded = false
 
@@ -125,7 +124,7 @@ private struct GridCell: View {
                 Text(item.analysis?.format?.label ?? " ")
                 Spacer(minLength: 4)
                 if let a = item.analysis {
-                    Text(PlotSettings.format(seconds: plot.value.seconds(a.fileTotals)))
+                    Text(PlotSettings.format(seconds: a.fileTotals.seconds))
                 }
             }
             .font(.caption2)

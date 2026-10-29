@@ -1,3 +1,4 @@
+import SVGroomCore
 import SwiftUI
 
 struct ContentView: View {
@@ -86,18 +87,17 @@ struct WelcomeView: View {
 
 struct SettingsView: View {
     @Environment(Library.self) private var library
-    private var plot = PlotSettingsStorage()
 
     var body: some View {
         Form {
             Section {
-                TextField("Pen-down speed (mm/s)", value: plot.$drawSpeed, format: .number)
-                TextField("Pen-up speed (mm/s)", value: plot.$travelSpeed, format: .number)
-                TextField("Pen lift + lower (s)", value: plot.$liftTime, format: .number)
+                ForEach(PlotSettings.fields, id: \.key) { f in
+                    PercentField(key: f.key, label: f.label, default: PlotSettings()[keyPath: f.path])
+                }
             } header: {
-                Text("Plot Time Estimate")
+                Text("AxiDraw Settings")
             } footer: {
-                Text("A rough estimate: constant speeds, no acceleration. Each layer is timed as its own job (one pen), starting and ending at the home corner.")
+                Text("Same values as in AxiDraw Control. Times follow the AxiDraw motion model (acceleration, slowing down in corners, pen-lift servo time) in high-resolution mode with the standard servo. Paths are plotted in file order; each layer is timed as its own job, starting and ending at the home corner.")
                     .font(.caption)
                     .foregroundStyle(.secondary)
             }

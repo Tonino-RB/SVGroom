@@ -4,20 +4,26 @@ import SVGroomCore
 import UniformTypeIdentifiers
 
 extension PlotSettings {
-    static let defaultsKeys = (draw: "plot.drawSpeed", travel: "plot.travelSpeed", lift: "plot.liftTime")
+    /// UserDefaults key, label in Settings, and setting.
+    static let fields: [(key: String, label: String, path: WritableKeyPath<PlotSettings, Double>)] = [
+        ("plot.penDownSpeed", "Pen-down speed", \.penDownSpeed),
+        ("plot.penUpSpeed", "Pen-up speed", \.penUpSpeed),
+        ("plot.acceleration", "Acceleration", \.acceleration),
+        ("plot.penUpHeight", "Pen up position", \.penUpHeight),
+        ("plot.penDownHeight", "Pen down position", \.penDownHeight),
+        ("plot.penRaiseRate", "Pen raising speed", \.penRaiseRate),
+        ("plot.penLowerRate", "Pen lowering speed", \.penLowerRate),
+    ]
 
     static func registerDefaults() {
         let d = PlotSettings()
-        UserDefaults.standard.register(defaults: [
-            defaultsKeys.draw: d.drawSpeed, defaultsKeys.travel: d.travelSpeed, defaultsKeys.lift: d.liftTime,
-        ])
+        UserDefaults.standard.register(defaults: Dictionary(uniqueKeysWithValues: fields.map { ($0.key, d[keyPath: $0.path]) }))
     }
 
     static var current: PlotSettings {
-        let u = UserDefaults.standard
-        return PlotSettings(drawSpeed: u.double(forKey: defaultsKeys.draw),
-                            travelSpeed: u.double(forKey: defaultsKeys.travel),
-                            liftTime: u.double(forKey: defaultsKeys.lift))
+        var s = PlotSettings()
+        for f in fields { s[keyPath: f.path] = UserDefaults.standard.double(forKey: f.key) }
+        return s
     }
 }
 
@@ -77,9 +83,16 @@ final class Library {
     @ObservationIgnored private var analysisRunning = 0
     private var analysisFailed: Set<UUID> = []
     @ObservationIgnored private var refreshTask: Task<Void, Never>?
+    /// Settings the plot times are computed with; files are re-analysed when they change.
+    @ObservationIgnored private var plotSettings: PlotSettings
+    @ObservationIgnored private var settingsTask: Task<Void, Never>?
 
     init() {
         PlotSettings.registerDefaults()
+        plotSettings = .current
+        NotificationCenter.default.addObserver(forName: UserDefaults.didChangeNotification, object: nil, queue: .main) { [weak self] _ in
+            MainActor.assumeIsolated { self?.plotSettingsMayHaveChanged() }
+        }
         if let p = UserDefaults.standard.string(forKey: Self.lastCatalogKey) {
             if FileManager.default.fileExists(atPath: p) {
                 open(URL(fileURLWithPath: p))
@@ -467,7 +480,6 @@ final class Library {
 
     func refreshDisplay() {
         let oldIndex = focusedID.flatMap { displayIndex[$0] }
-        let settings = PlotSettings.current
         var list = items.values.filter { matchesSource($0) && matchesFilter($0) }
         list.sort { a, b in
             let order: ComparisonResult
@@ -477,8 +489,7 @@ final class Library {
             case .rating: order = Self.compare(a.rating, b.rating)
             case .size: order = Self.compare(a.fileSize, b.fileSize)
             case .plotTime:
-                order = Self.compare(a.analysis.map { settings.seconds($0.fileTotals) } ?? -1,
-                                     b.analysis.map { settings.seconds($0.fileTotals) } ?? -1)
+                order = Self.compare(a.analysis?.fileTotals.seconds ?? -1, b.analysis?.fileTotals.seconds ?? -1)
             }
             if order == .orderedSame { return a.path.localizedStandardCompare(b.path) == .orderedAscending }
             return sortAscending ? order == .orderedAscending : order == .orderedDescending
@@ -625,7 +636,22 @@ final class Library {
     // MARK: - Analysis (background, never blocks browsing)
 
     private func needsAnalysis(_ item: SVGItem) -> Bool {
-        !item.missing && !analysisFailed.contains(item.id) && item.analysis?.version != SVGAnalyzer.version
+        guard !item.missing, !analysisFailed.contains(item.id) else { return false }
+        guard let a = item.analysis else { return true }
+        return a.version != SVGAnalyzer.version || a.settings != plotSettings
+    }
+
+    /// Recomputes plot times once the settings have stopped changing.
+    private func plotSettingsMayHaveChanged() {
+        let s = PlotSettings.current
+        guard s != plotSettings else { return }
+        plotSettings = s
+        settingsTask?.cancel()
+        settingsTask = Task { [weak self] in
+            try? await Task.sleep(for: .milliseconds(800))
+            guard !Task.isCancelled else { return }
+            self?.scheduleAnalysis()
+        }
     }
 
     /// Analyses the displayed files in order; online-only files are skipped unless focused.
@@ -656,9 +682,9 @@ final class Library {
             let id = analysisQueue.removeFirst()
             guard let item = items[id], needsAnalysis(item) else { continue }
             analysisRunning += 1
-            let url = item.url, size = item.fileSize, modified = item.modified
+            let url = item.url, size = item.fileSize, modified = item.modified, settings = plotSettings
             Task {
-                let result = await Task.detached(priority: .utility) { try? SVGAnalyzer.analyze(url: url) }.value
+                let result = await Task.detached(priority: .utility) { try? SVGAnalyzer.analyze(url: url, settings: settings) }.value
                 analysisRunning -= 1
                 if let item = items[id], item.fileSize == size, item.modified == modified {
                     if let result, let a = result.analysis {

@@ -39,6 +39,24 @@ struct Entry: Codable {
     var analysis: SVGAnalysis?
 }
 
+extension Entry {
+    /// An analysis saved by an older version that no longer decodes is dropped and recomputed.
+    init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        id = try c.decode(UUID.self, forKey: .id)
+        path = try c.decode(String.self, forKey: .path)
+        bookmark = try c.decodeIfPresent(Data.self, forKey: .bookmark)
+        fileSize = try c.decode(Int64.self, forKey: .fileSize)
+        modified = try c.decode(Date.self, forKey: .modified)
+        contentHash = try c.decodeIfPresent(String.self, forKey: .contentHash)
+        rating = try c.decode(Int.self, forKey: .rating)
+        flag = try c.decode(Flag.self, forKey: .flag)
+        label = try c.decode(ColorLabel.self, forKey: .label)
+        added = try c.decode(Date.self, forKey: .added)
+        analysis = try? c.decodeIfPresent(SVGAnalysis.self, forKey: .analysis)
+    }
+}
+
 @Observable
 final class SVGItem: Identifiable {
     let id: UUID

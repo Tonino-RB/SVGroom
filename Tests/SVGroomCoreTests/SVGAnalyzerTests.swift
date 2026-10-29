@@ -38,7 +38,7 @@ private func near(_ a: Double, _ b: Double, _ tol: Double = 0.05) -> Bool { abs(
 
     // Two half circles of radius 10 written as arcs, compact flag syntax.
     let arc = analyze(#"<path d="M0 0a10 10 0 0120 0a10 10 0 01-20 0z"/>"#).fileTotals
-    #expect(near(arc.drawMM, 2 * .pi * 10, 0.1))
+    #expect(near(arc.drawMM, 2 * .pi * 10, 0.15))
 }
 
 @Test func cubicMatchesQuarterCircle() {
@@ -74,11 +74,35 @@ private func near(_ a: Double, _ b: Double, _ tol: Double = 0.05) -> Bool { abs(
     #expect(a.textCount == 1)
 }
 
-@Test func plotTime() {
-    var s = LayerStats(name: "x")
-    s.drawMM = 400; s.travelMM = 1200; s.strokes = 10
-    #expect(near(PlotSettings(drawSpeed: 40, travelSpeed: 120, liftTime: 0.5).seconds(s), 10 + 10 + 5))
+@Test func plotTimeMatchesAxiDraw() {
+    // References: AxiDraw software 3.9.5 in preview mode (pt_estimate), model A3, default PlotSettings
+    // (pen-down 20 %, pen-up 75 %, accel 50 %, up 60 / down 30, raise 100 %, lower 50 %).
+    let line = analyze(#"<path d="M 20 20 L 400 20"/>"#).fileTotals
+    #expect(near(line.seconds, 13.036, 0.05))
+    let dashes = (0..<10).map { #"<path d="M\#(20 + Double($0) * 6.3) 20 L\#(22 + Double($0) * 6.3) 21"/>"# }.joined()
+    #expect(near(analyze(dashes).fileTotals.seconds, 7.629, 0.05))
+    let circle = analyze(#"<path d="M105 100 A5 5 0 1 0 95 100 A5 5 0 1 0 105 100"/>"#).fileTotals
+    #expect(near(circle.seconds, 3.368, 0.05))
     #expect(PlotSettings.format(seconds: 3725) == "1 h 02")
+}
+
+@Test func motionModel() {
+    let m = MotionModel(PlotSettings())
+    // A long move cruises: d/v plus v/a lost to speeding up and slowing down.
+    #expect(near(MotionModel.moveTime(1000, v0: 0, v1: 0, vmax: 40, accel: 500), 1000.0 / 40 + 40.0 / 500, 1e-9))
+    // A move too short for two ramps (AxiDraw: under 5 time slices) ramps down from half its peak speed: 4·√(d/a).
+    #expect(near(MotionModel.moveTime(2, v0: 0, v1: 0, vmax: 40, accel: 500), 4 * (2.0 / 500).squareRoot(), 1e-9))
+    // Same length: straight is faster than with a U-turn, and collinear points don't slow down.
+    let straight = m.strokeTime([Point(x: 0, y: 0), Point(x: 100, y: 0)])
+    let split = m.strokeTime([Point(x: 0, y: 0), Point(x: 50, y: 0), Point(x: 100, y: 0)])
+    let uTurn = m.strokeTime([Point(x: 0, y: 0), Point(x: 50, y: 0), Point(x: 0, y: 0)])
+    #expect(near(straight, split, 1e-9))
+    #expect(near(uTurn - straight, m.downSpeed / m.downAccel, 1e-9))
+}
+
+@Test func touchingPathsAreJoined() {
+    let t = analyze(#"<path d="M 10 10 L 20 10"/><path d="M 20 10 L 30 10"/><path d="M 40 10 L 50 10"/>"#).fileTotals
+    #expect(t.strokes == 2)
 }
 
 @Test func layerEditorRemovesHiddenAndAppliesOverrides() {

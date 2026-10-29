@@ -92,7 +92,6 @@ private struct MetadataEditor: View {
 private struct ItemInspector: View {
     @Environment(Library.self) private var library
     let item: SVGItem
-    private let plot = PlotSettingsStorage()
 
     var body: some View {
         VStack(alignment: .leading, spacing: 4) {
@@ -150,10 +149,8 @@ private struct AnalysisSections: View {
     @Environment(Library.self) private var library
     let analysis: SVGAnalysis
     let item: SVGItem
-    private let plot = PlotSettingsStorage()
 
     var body: some View {
-        let settings = plot.value
         let totals = analysis.totals { library.isLayerVisible($0, in: analysis) }
 
         Section(title: "Document") {
@@ -166,7 +163,7 @@ private struct AnalysisSections: View {
         }
 
         Section(title: "Plot Estimate") {
-            Text(PlotSettings.format(seconds: settings.seconds(totals)))
+            Text(PlotSettings.format(seconds: totals.seconds))
                 .font(.system(size: 26, weight: .semibold, design: .rounded))
             Row(label: "Pen down", value: Self.distance(totals.drawMM))
             Row(label: "Pen up", value: Self.distance(totals.travelMM))
@@ -185,8 +182,9 @@ private struct AnalysisSections: View {
         if !analysis.layers.isEmpty {
             Section(title: "Layers") {
                 ForEach(Array(analysis.layers.enumerated()), id: \.offset) { i, layer in
-                    LayerRow(layer: layer, visible: library.isLayerVisible(i, in: analysis),
-                             time: settings.seconds(layer)) { library.setLayer(i, visible: $0, in: analysis) }
+                    LayerRow(layer: layer, visible: library.isLayerVisible(i, in: analysis)) {
+                        library.setLayer(i, visible: $0, in: analysis)
+                    }
                 }
                 if analysis.unlayered.elements > 0 {
                     Text("+ \(analysis.unlayered.elements) element(s) outside layers")
@@ -223,7 +221,6 @@ private struct AnalysisSections: View {
 private struct LayerRow: View {
     let layer: LayerStats
     let visible: Bool
-    let time: Double
     let setVisible: (Bool) -> Void
 
     var body: some View {
@@ -248,7 +245,7 @@ private struct LayerRow: View {
                     .font(.caption2).foregroundStyle(.secondary)
             }
             Spacer(minLength: 4)
-            Text(PlotSettings.format(seconds: time)).font(.caption).monospacedDigit().foregroundStyle(.secondary)
+            Text(PlotSettings.format(seconds: layer.seconds)).font(.caption).monospacedDigit().foregroundStyle(.secondary)
         }
         .opacity(visible ? 1 : 0.55)
         .font(.callout)
@@ -258,11 +255,10 @@ private struct LayerRow: View {
 private struct MultiInspector: View {
     @Environment(Library.self) private var library
     let items: [SVGItem]
-    private let plot = PlotSettingsStorage()
 
     var body: some View {
         let analysed = items.compactMap(\.analysis)
-        let seconds = analysed.reduce(0) { $0 + plot.value.seconds($1.fileTotals) }
+        let seconds = analysed.reduce(0) { $0 + $1.fileTotals.seconds }
         let draw = analysed.reduce(0) { $0 + $1.fileTotals.drawMM }
 
         Text("\(items.count) SVGs selected").font(.headline)

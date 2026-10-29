@@ -30,7 +30,9 @@ SVG › Auto Advance After Rating jumps to the next file after each key (fast cu
 
 ## Plot time
 
-Rough estimate: pen-down distance / pen-down speed + pen-up distance / pen-up speed + pen lifts × lift time, with no acceleration. Each layer is timed as its own job (one pen per layer), starting and ending at the home corner. You can change the speeds in Settings (⌘,). Defaults: 40 mm/s down, 120 mm/s up, 0.3 s per lift.
+Modelled on an AxiDraw (high-resolution mode, standard pen-lift servo) and checked against the AxiDraw software's own estimate (v3.9.5, preview mode): within 0.5 % on test patterns and about 1 % on real exports. It accounts for acceleration, slowing down in corners, how the AxiDraw plans very short moves, paths that touch being drawn in one go, and the servo time of each pen lift. Paths are plotted in file order (AxiDraw reordering off). Each layer is timed as its own job, starting and ending at the home corner.
+
+Settings (⌘,) take the same values as AxiDraw Control. Defaults: pen-down speed 20 %, pen-up 75 %, acceleration 50 %, pen up / down position 60 / 30 %, raising 100 %, lowering 50 %. Changing them recomputes the times in the background.
 
 ## Build
 

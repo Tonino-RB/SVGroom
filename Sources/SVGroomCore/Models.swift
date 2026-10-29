@@ -31,6 +31,8 @@ public struct LayerStats: Codable, Sendable, Equatable {
     public var drawMM: Double = 0
     /// Pen-up distance in mm, starting from and returning to the home corner (0,0).
     public var travelMM: Double = 0
+    /// Estimated plot time in seconds, for the settings stored in the analysis.
+    public var seconds: Double = 0
     public var bounds: MMRect?
 
     public init(name: String, hiddenInFile: Bool = false) {
@@ -43,12 +45,15 @@ public struct LayerStats: Codable, Sendable, Equatable {
         strokes += o.strokes
         drawMM += o.drawMM
         travelMM += o.travelMM
+        seconds += o.seconds
         if let b = o.bounds { bounds = bounds.map { $0.union(b) } ?? b }
     }
 }
 
 public struct SVGAnalysis: Codable, Sendable, Equatable {
     public var version: Int
+    /// Machine settings the plot times were computed with.
+    public var settings: PlotSettings
     public var widthMM: Double?
     public var heightMM: Double?
     /// Top-level Inkscape layers, in document order.
@@ -83,19 +88,18 @@ public struct SVGAnalysis: Codable, Sendable, Equatable {
     }
 }
 
-/// Rough pen-plotter timing model: constant speeds, fixed time per pen lift, no acceleration.
-public struct PlotSettings: Sendable, Equatable {
-    public var drawSpeed: Double   // mm/s, pen down
-    public var travelSpeed: Double // mm/s, pen up
-    public var liftTime: Double    // s per pen up + pen down
+/// AxiDraw settings, with the same meaning and units as in AxiDraw Control (percentages).
+/// Defaults: pen-down speed 20 %, otherwise the values saved in this studio's AxiDraw Control.
+public struct PlotSettings: Codable, Sendable, Equatable {
+    public var penDownSpeed = 20.0
+    public var penUpSpeed = 75.0
+    public var acceleration = 50.0
+    public var penUpHeight = 60.0
+    public var penDownHeight = 30.0
+    public var penRaiseRate = 100.0
+    public var penLowerRate = 50.0
 
-    public init(drawSpeed: Double = 40, travelSpeed: Double = 120, liftTime: Double = 0.3) {
-        self.drawSpeed = drawSpeed; self.travelSpeed = travelSpeed; self.liftTime = liftTime
-    }
-
-    public func seconds(_ s: LayerStats) -> Double {
-        s.drawMM / max(drawSpeed, 0.1) + s.travelMM / max(travelSpeed, 0.1) + Double(s.strokes) * liftTime
-    }
+    public init() {}
 
     public static func format(seconds: Double) -> String {
         let s = Int(seconds.rounded())

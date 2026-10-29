@@ -111,13 +111,20 @@ struct LabelDot: View {
     }
 }
 
-/// Reads the plot-time settings and keeps views in sync when they change.
-struct PlotSettingsStorage: DynamicProperty {
-    @AppStorage(PlotSettings.defaultsKeys.draw) var drawSpeed = PlotSettings().drawSpeed
-    @AppStorage(PlotSettings.defaultsKeys.travel) var travelSpeed = PlotSettings().travelSpeed
-    @AppStorage(PlotSettings.defaultsKeys.lift) var liftTime = PlotSettings().liftTime
+/// One AxiDraw setting in percent, stored in UserDefaults.
+struct PercentField: View {
+    let label: String
+    @AppStorage private var value: Double
 
-    var value: PlotSettings { PlotSettings(drawSpeed: drawSpeed, travelSpeed: travelSpeed, liftTime: liftTime) }
+    init(key: String, label: String, default value: Double) {
+        self.label = label
+        _value = AppStorage(wrappedValue: value, key)
+    }
+
+    var body: some View {
+        TextField(label, value: $value, format: .number)
+            .overlay(alignment: .trailing) { Text("%").foregroundStyle(.secondary).padding(.trailing, 4) }
+    }
 }
 
 /// Context menu shared by grid cells. Right-clicking outside the selection acts on that item only.

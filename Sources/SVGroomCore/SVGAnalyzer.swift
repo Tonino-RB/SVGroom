@@ -5,10 +5,10 @@ import CryptoKit
 /// page size, Inkscape layers, pen-down / pen-up distances and pen lifts.
 public enum SVGAnalyzer {
     /// Bump when the analysis changes, so cached results in catalogs are recomputed.
-    public static let version = 1
+    public static let version = 2
 
-    public static func analyze(data: Data) -> SVGAnalysis? {
-        let handler = SAXHandler()
+    public static func analyze(data: Data, settings: PlotSettings = PlotSettings()) -> SVGAnalysis? {
+        let handler = SAXHandler(motion: MotionModel(settings), settings: settings)
         let parser = XMLParser(data: data)
         parser.shouldProcessNamespaces = false
         parser.shouldResolveExternalEntities = false
@@ -19,9 +19,9 @@ public enum SVGAnalyzer {
     }
 
     /// Reads the file once; returns the analysis and the SHA-256 of its content.
-    public static func analyze(url: URL) throws -> (analysis: SVGAnalysis?, hash: String) {
+    public static func analyze(url: URL, settings: PlotSettings = PlotSettings()) throws -> (analysis: SVGAnalysis?, hash: String) {
         let data = try Data(contentsOf: url, options: .mappedIfSafe)
-        return (analyze(data: data), contentHash(data))
+        return (analyze(data: data, settings: settings), contentHash(data))
     }
 
     public static func contentHash(_ data: Data) -> String {
@@ -32,29 +32,52 @@ public enum SVGAnalyzer {
 /// Accumulates one plotting job (a layer, or the unlayered content). Points are in mm.
 final class StrokeAccumulator {
     var stats: LayerStats
+    private let motion: MotionModel
     private var pen = Point(x: 0, y: 0)
     private var pending: Point?
+    private var stroke: [Point] = []
 
-    init(name: String, hidden: Bool = false) { stats = LayerStats(name: name, hiddenInFile: hidden) }
+    init(name: String, hidden: Bool = false, motion: MotionModel) {
+        stats = LayerStats(name: name, hiddenInFile: hidden)
+        self.motion = motion
+    }
 
     func move(_ p: Point) { pending = p }
 
     func line(_ p: Point) {
         if let start = pending {
-            stats.travelMM += pen.distance(to: start)
-            stats.strokes += 1
-            pen = start
-            include(start)
             pending = nil
+            if stroke.isEmpty || pen.distance(to: start) > MotionModel.joinGap {
+                // Paths that touch are drawn in one go, like the AxiDraw does.
+                endStroke()
+                let d = pen.distance(to: start)
+                stats.travelMM += d
+                stats.seconds += motion.travelTime(d) + motion.liftTime
+                stats.strokes += 1
+                pen = start
+                include(start)
+                stroke.append(start)
+            }
         }
         stats.drawMM += pen.distance(to: p)
         pen = p
         include(p)
+        stroke.append(p)
     }
 
     func finish() -> LayerStats {
-        if stats.strokes > 0 { stats.travelMM += pen.distance(to: Point(x: 0, y: 0)) }
+        endStroke()
+        if stats.strokes > 0 {
+            let d = pen.distance(to: Point(x: 0, y: 0))
+            stats.travelMM += d
+            stats.seconds += motion.travelTime(d)
+        }
         return stats
+    }
+
+    private func endStroke() {
+        stats.seconds += motion.strokeTime(stroke)
+        stroke.removeAll(keepingCapacity: true)
     }
 
     private func include(_ p: Point) {
@@ -81,16 +104,25 @@ private final class SAXHandler: NSObject, XMLParserDelegate {
     private var skipDepth = 0
     private var ctm: [Affine] = []
     private var strokeColor: [String?] = []
+    private let motion: MotionModel
+    private let settings: PlotSettings
     private var layers: [StrokeAccumulator] = []
-    private let unlayered = StrokeAccumulator(name: "")
+    private let unlayered: StrokeAccumulator
     private var layerIndex: Int?
     private var layerDepth = 0
     private var textCount = 0, imageCount = 0, useCount = 0
 
     private var acc: StrokeAccumulator { layerIndex.map { layers[$0] } ?? unlayered }
 
+    init(motion: MotionModel, settings: PlotSettings) {
+        self.motion = motion
+        self.settings = settings
+        unlayered = StrokeAccumulator(name: "", motion: motion)
+        super.init()
+    }
+
     func result() -> SVGAnalysis {
-        SVGAnalysis(version: SVGAnalyzer.version, widthMM: widthMM, heightMM: heightMM,
+        SVGAnalysis(version: SVGAnalyzer.version, settings: settings, widthMM: widthMM, heightMM: heightMM,
                     layers: layers.map { $0.finish() }, unlayered: unlayered.finish(),
                     textCount: textCount, imageCount: imageCount, useCount: useCount)
     }
@@ -133,7 +165,7 @@ private final class SAXHandler: NSObject, XMLParserDelegate {
 
         if isLayer {
             let label = a.first(where: { $0.key.hasSuffix(":label") })?.value ?? a["id"] ?? "Layer \(layers.count + 1)"
-            layers.append(StrokeAccumulator(name: label, hidden: hidden))
+            layers.append(StrokeAccumulator(name: label, hidden: hidden, motion: motion))
             layerIndex = layers.count - 1
             layerDepth = depth
             return
@@ -216,12 +248,9 @@ private final class SAXHandler: NSObject, XMLParserDelegate {
 
     private func ellipse(_ cx: Double, _ cy: Double, _ rx: Double, _ ry: Double, _ m: Affine, _ acc: StrokeAccumulator) {
         guard rx > 0, ry > 0 else { return }
-        let n = 64
         acc.move(m.apply(cx + rx, cy))
-        for k in 1...n {
-            let t = Double(k) / Double(n) * 2 * .pi
-            acc.line(m.apply(cx + rx * cos(t), cy + ry * sin(t)))
-        }
+        PathWalker.arcCurves(cx, cy, rx, ry, 0, 0, .pi, m, acc)
+        PathWalker.arcCurves(cx, cy, rx, ry, 0, .pi, .pi, m, acc)
     }
 
     static func styleValue(_ style: String, _ key: String) -> String? {
@@ -316,27 +345,45 @@ enum PathWalker {
         }
     }
 
-    private static func segments(_ polyLength: Double) -> Int { min(32, max(1, Int((polyLength / 0.5).rounded(.up)))) }
+    /// Flatness of the polylines curves are cut into, mm (AxiDraw curve_tolerance 0.002 in).
+    static let tolerance = 0.002 * 25.4
 
     private static func cubic(_ x0: Double, _ y0: Double, _ x1: Double, _ y1: Double, _ x2: Double, _ y2: Double,
                               _ x3: Double, _ y3: Double, _ m: Affine, _ acc: StrokeAccumulator) {
         // Affine maps Béziers to Béziers: flatten the transformed control polygon.
-        let p0 = m.apply(x0, y0), p1 = m.apply(x1, y1), p2 = m.apply(x2, y2), p3 = m.apply(x3, y3)
-        let n = segments(p0.distance(to: p1) + p1.distance(to: p2) + p2.distance(to: p3))
-        for k in 1...n {
-            let t = Double(k) / Double(n), u = 1 - t
-            let a = u * u * u, b = 3 * u * u * t, c = 3 * u * t * t, d = t * t * t
-            acc.line(Point(x: a * p0.x + b * p1.x + c * p2.x + d * p3.x, y: a * p0.y + b * p1.y + c * p2.y + d * p3.y))
-        }
+        flatten(m.apply(x0, y0), m.apply(x1, y1), m.apply(x2, y2), m.apply(x3, y3), 0, acc)
     }
 
     private static func quad(_ x0: Double, _ y0: Double, _ x1: Double, _ y1: Double, _ x2: Double, _ y2: Double,
                              _ m: Affine, _ acc: StrokeAccumulator) {
-        let p0 = m.apply(x0, y0), p1 = m.apply(x1, y1), p2 = m.apply(x2, y2)
-        let n = segments(p0.distance(to: p1) + p1.distance(to: p2))
-        for k in 1...n {
-            let t = Double(k) / Double(n), u = 1 - t
-            acc.line(Point(x: u * u * p0.x + 2 * u * t * p1.x + t * t * p2.x, y: u * u * p0.y + 2 * u * t * p1.y + t * t * p2.y))
+        cubic(x0, y0, x0 + 2 / 3 * (x1 - x0), y0 + 2 / 3 * (y1 - y0),
+              x2 + 2 / 3 * (x1 - x2), y2 + 2 / 3 * (y1 - y2), x2, y2, m, acc)
+    }
+
+    /// Halves the curve until both control points are within `tolerance` of the chord, as the AxiDraw does.
+    private static func flatten(_ p0: Point, _ p1: Point, _ p2: Point, _ p3: Point, _ depth: Int, _ acc: StrokeAccumulator) {
+        if depth >= 16 || (p1.distance(toSegment: p0, p3) <= tolerance && p2.distance(toSegment: p0, p3) <= tolerance) {
+            acc.line(p3)
+            return
+        }
+        func mid(_ a: Point, _ b: Point) -> Point { Point(x: (a.x + b.x) / 2, y: (a.y + b.y) / 2) }
+        let p01 = mid(p0, p1), p12 = mid(p1, p2), p23 = mid(p2, p3)
+        let p012 = mid(p01, p12), p123 = mid(p12, p23), c = mid(p012, p123)
+        flatten(p0, p01, p012, c, depth + 1, acc)
+        flatten(c, p123, p23, p3, depth + 1, acc)
+    }
+
+    /// Elliptical arc as Bézier curves, ⌊2·|Δθ|/π⌋ + 1 of them (as Inkscape converts arcs), then flattened.
+    static func arcCurves(_ cx: Double, _ cy: Double, _ rx: Double, _ ry: Double, _ phi: Double,
+                          _ theta1: Double, _ dTheta: Double, _ m: Affine, _ acc: StrokeAccumulator) {
+        let cp = cos(phi), sp = sin(phi)
+        func point(_ x: Double, _ y: Double) -> Point { m.apply(cx + rx * x * cp - ry * y * sp, cy + rx * x * sp + ry * y * cp) }
+        let n = Int(abs(dTheta) * 2 / .pi) + 1
+        let step = dTheta / Double(n), k = 4 / 3 * tan(step / 4)
+        for i in 0..<n {
+            let a = theta1 + step * Double(i), b = a + step
+            flatten(point(cos(a), sin(a)), point(cos(a) - k * sin(a), sin(a) + k * cos(a)),
+                    point(cos(b) + k * sin(b), sin(b) - k * cos(b)), point(cos(b), sin(b)), 0, acc)
         }
     }
 
@@ -369,11 +416,6 @@ enum PathWalker {
         if !sweep && dTheta > 0 { dTheta -= 2 * .pi }
         if sweep && dTheta < 0 { dTheta += 2 * .pi }
 
-        let n = min(64, max(2, Int((abs(dTheta) / (.pi / 32)).rounded(.up))))
-        for k in 1...n {
-            let t = theta1 + dTheta * Double(k) / Double(n)
-            let ex = rx * cos(t), ey = ry * sin(t)
-            acc.line(m.apply(cx + ex * cp - ey * sp, cy + ex * sp + ey * cp))
-        }
+        arcCurves(cx, cy, rx, ry, phi, theta1, dTheta, m, acc)
     }
 }
