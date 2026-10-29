@@ -29,12 +29,14 @@ final class Thumbnailer {
 
 /// Full-size preview through CoreSVG (vector, stays sharp when zooming).
 enum LoupeRenderer {
-    static func load(_ url: URL, overrides: [Int: Bool]) async -> NSImage? {
+    /// With `area` (page millimetres), the image covers that area instead of the page.
+    static func load(_ url: URL, overrides: [Int: Bool], area: MMRect? = nil) async -> NSImage? {
         let data = await Task.detached(priority: .userInitiated) { () -> Data? in
-            guard let d = try? Data(contentsOf: url) else { return nil }
+            guard var d = try? Data(contentsOf: url) else { return nil }
             // CoreSVG ignores display:none, so hidden layers are stripped first.
-            guard LayerEditor.needsEditing(d, overrides: overrides) else { return d }
-            return LayerEditor.render(d, overrides: overrides) ?? d
+            if LayerEditor.needsEditing(d, overrides: overrides) { d = LayerEditor.render(d, overrides: overrides) ?? d }
+            guard let area else { return d }
+            return LayerEditor.expandPage(d, to: area) ?? d
         }.value
         return data.flatMap(NSImage.init(data:))
     }

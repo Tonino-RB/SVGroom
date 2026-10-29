@@ -38,6 +38,30 @@ public enum LayerEditor {
         return doc.xmlData(options: [.nodePreserveAll])
     }
 
+    /// Enlarges the page to `rect` (page millimetres, may reach past the page) so the renderer,
+    /// which clips to the page, also draws what lies outside it.
+    public static func expandPage(_ data: Data, to rect: MMRect) -> Data? {
+        guard let doc = try? XMLDocument(data: data, options: [.nodePreserveAll]), let root = doc.rootElement() else { return nil }
+        let attributes = Dictionary((root.attributes ?? []).compactMap { a in a.name.map { ($0, a.stringValue ?? "") } },
+                                    uniquingKeysWith: { first, _ in first })
+        let m = SVGUnits.rootTransform(attributes).transform
+        guard m.a != 0, m.d != 0 else { return nil }
+
+        let values = [
+            ("width", "\(rect.width)mm"),
+            ("height", "\(rect.height)mm"),
+            ("viewBox", "\((rect.minX - m.e) / m.a) \((rect.minY - m.f) / m.d) \(rect.width / m.a) \(rect.height / m.d)"),
+            ("preserveAspectRatio", "none"),
+        ]
+        for (name, value) in values {
+            root.removeAttribute(forName: name)
+            root.addAttribute(XMLNode.attribute(withName: name, stringValue: value) as! XMLNode)
+        }
+        root.removeAttribute(forName: "x")
+        root.removeAttribute(forName: "y")
+        return doc.xmlData(options: [.nodePreserveAll])
+    }
+
     private static func isHidden(_ el: XMLElement) -> Bool {
         if el.attribute(forName: "display")?.stringValue == "none" { return true }
         guard let style = el.attribute(forName: "style")?.stringValue else { return false }

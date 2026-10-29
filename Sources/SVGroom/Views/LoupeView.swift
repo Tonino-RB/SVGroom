@@ -1,4 +1,5 @@
 import AppKit
+import SVGroomCore
 import SwiftUI
 
 struct LoupeView: View {
@@ -19,19 +20,32 @@ private struct LoupeContent: View {
     let overrides: [Int: Bool]
     @State private var image: NSImage?
     @State private var imagePath: String?
+    @State private var imagePage: CGRect?
     @State private var loading = false
+    @AppStorage("showOutsidePage") private var showOutside = false
 
     private struct Key: Equatable {
         let path: String
         let modified: Date
         let overrides: [Int: Bool]
         let missing: Bool
+        let area: MMRect?
+    }
+
+    /// Page and drawing together (page mm), when the drawing goes past the page and that is shown.
+    private var outsideArea: MMRect? {
+        guard showOutside, let a = item.analysis, let w = a.widthMM, let h = a.heightMM else { return nil }
+        let totals = a.totals { library.isLayerVisible($0, in: a) }
+        guard a.exceedsPage(totals), let b = totals.bounds else { return nil }
+        let margin = 2.0 // Bounds follow the stroke centre lines.
+        return MMRect(minX: 0, minY: 0, maxX: w, maxY: h)
+            .union(MMRect(minX: b.minX - margin, minY: b.minY - margin, maxX: b.maxX + margin, maxY: b.maxY + margin))
     }
 
     var body: some View {
         @Bindable var library = library
         ZStack {
-            PaperView(image: imagePath == item.path ? image : nil, zoom: $library.loupeZoom)
+            PaperView(image: imagePath == item.path ? image : nil, zoom: $library.loupeZoom, page: imagePage)
             if item.missing {
                 VStack(spacing: 10) {
                     Image(systemName: "questionmark.square.dashed").font(.system(size: 48)).foregroundStyle(.secondary)
@@ -45,15 +59,21 @@ private struct LoupeContent: View {
                 Text("This SVG could not be rendered.").foregroundStyle(.secondary)
             }
         }
-        .overlay(alignment: .bottom) { LoupeControls(item: item) }
-        .task(id: Key(path: item.path, modified: item.modified, overrides: overrides, missing: item.missing)) {
+        .overlay(alignment: .bottom) { LoupeControls(item: item, showOutside: $showOutside) }
+        .task(id: Key(path: item.path, modified: item.modified, overrides: overrides, missing: item.missing, area: outsideArea)) {
             guard !item.missing else { image = nil; imagePath = nil; return }
             loading = true
             let path = item.path
-            let loaded = await LoupeRenderer.load(item.url, overrides: overrides)
+            let area = outsideArea
+            let loaded = await LoupeRenderer.load(item.url, overrides: overrides, area: area)
             guard !Task.isCancelled else { return }
             image = loaded
             imagePath = path
+            // Where the page sits in the enlarged image, in unit coordinates.
+            imagePage = area.map {
+                CGRect(x: -$0.minX / $0.width, y: -$0.minY / $0.height,
+                       width: (item.analysis?.widthMM ?? 0) / $0.width, height: (item.analysis?.heightMM ?? 0) / $0.height)
+            }
             loading = false
         }
     }
@@ -63,6 +83,8 @@ private struct LoupeContent: View {
 struct LoupeControls: View {
     @Environment(Library.self) private var library
     let item: SVGItem
+    /// Shows the button for drawing outside the page when set.
+    var showOutside: Binding<Bool>?
 
     var body: some View {
         HStack(spacing: 10) {
@@ -76,6 +98,12 @@ struct LoupeControls: View {
             Text("\(Int((library.loupeZoom * 100).rounded())) %").monospacedDigit().frame(width: 52)
             Button { library.loupeZoom = min(40, library.loupeZoom * 1.5) } label: { Image(systemName: "plus.magnifyingglass") }
             Button("Fit") { library.loupeZoom = 1 }.help("Fit (Z toggles zoom)")
+            if let showOutside {
+                Divider().frame(height: 14)
+                Button { showOutside.wrappedValue.toggle() } label: { Image(systemName: "rectangle.dashed") }
+                    .foregroundStyle(showOutside.wrappedValue ? Color(nsColor: PaperDocumentView.outsideColor) : .primary)
+                    .help(showOutside.wrappedValue ? "Hide Drawing Outside the Page" : "Show Drawing Outside the Page")
+            }
         }
         .buttonStyle(.borderless)
         .font(.callout)
@@ -95,6 +123,8 @@ struct PaperView: NSViewRepresentable {
     /// are drawn at the same scale. Nil fits the image.
     var sheetMM: CGSize?
     var fitMM: CGSize?
+    /// Where the page sits in an image that reaches past it (unit coordinates, y down).
+    var page: CGRect?
 
     func makeCoordinator() -> Coordinator { Coordinator(self) }
 
@@ -116,10 +146,11 @@ struct PaperView: NSViewRepresentable {
     func updateNSView(_ scroll: NSScrollView, context: Context) {
         context.coordinator.parent = self
         if let doc = scroll.documentView as? PaperDocumentView,
-           doc.image !== image || doc.sheetMM != sheetMM || doc.fitMM != fitMM {
+           doc.image !== image || doc.sheetMM != sheetMM || doc.fitMM != fitMM || doc.page != page {
             doc.image = image
             doc.sheetMM = sheetMM
             doc.fitMM = fitMM
+            doc.page = page
             doc.needsDisplay = true
         }
         if abs(scroll.magnification - zoom) > 0.001 {
@@ -148,10 +179,14 @@ private final class FittingScrollView: NSScrollView {
     }
 }
 
-private final class PaperDocumentView: NSView {
+final class PaperDocumentView: NSView {
+    /// Drawing outside the page, chosen to stand out from the grey background and the white sheet.
+    static let outsideColor = NSColor(srgbRed: 1, green: 0, blue: 0.85, alpha: 1)
+
     var image: NSImage?
     var sheetMM: CGSize?
     var fitMM: CGSize?
+    var page: CGRect?
 
     override var isFlipped: Bool { true }
 
@@ -162,7 +197,18 @@ private final class PaperDocumentView: NSView {
         let area = bounds.insetBy(dx: 28, dy: 28)
         let s = min(area.width / fitSize.width, area.height / fitSize.height)
         let w = sheetSize.width * s, h = sheetSize.height * s
-        let sheet = NSRect(x: bounds.midX - w / 2, y: bounds.midY - h / 2, width: w, height: h)
+        let full = NSRect(x: bounds.midX - w / 2, y: bounds.midY - h / 2, width: w, height: h)
+        let p = page ?? CGRect(x: 0, y: 0, width: 1, height: 1)
+        let sheet = NSRect(x: full.minX + p.minX * w, y: full.minY + p.minY * h, width: p.width * w, height: p.height * h)
+
+        // Everything in one flat colour first; the sheet then covers what is on the page.
+        if page != nil, let cg = NSGraphicsContext.current?.cgContext {
+            cg.beginTransparencyLayer(in: full, auxiliaryInfo: nil)
+            image.draw(in: full, from: .zero, operation: .sourceOver, fraction: 1, respectFlipped: true, hints: nil)
+            Self.outsideColor.setFill()
+            full.fill(using: .sourceAtop)
+            cg.endTransparencyLayer()
+        }
 
         NSGraphicsContext.saveGraphicsState()
         let shadow = NSShadow()
@@ -174,6 +220,9 @@ private final class PaperDocumentView: NSView {
         sheet.fill()
         NSGraphicsContext.restoreGraphicsState()
 
-        image.draw(in: sheet, from: .zero, operation: .sourceOver, fraction: 1, respectFlipped: true, hints: nil)
+        NSGraphicsContext.saveGraphicsState()
+        sheet.clip()
+        image.draw(in: full, from: .zero, operation: .sourceOver, fraction: 1, respectFlipped: true, hints: nil)
+        NSGraphicsContext.restoreGraphicsState()
     }
 }
