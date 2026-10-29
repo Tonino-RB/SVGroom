@@ -609,8 +609,22 @@ final class Library {
         }
     }
 
-    /// How far up/down arrows move: a whole row in the grid, one file elsewhere.
-    var rowStep: Int { viewMode == .grid && previewMode == .normal ? gridColumns : 1 }
+    /// Sidebar folders whose subfolders are shown.
+    var expandedFolders: Set<String> = []
+
+    /// Steps through the sidebar rows as they are shown, without opening folders.
+    func moveSource(by delta: Int) {
+        var rows: [SidebarSource] = [.all, .missing]
+        func add(_ nodes: [FolderNode]) {
+            for node in nodes {
+                rows.append(.folder(node.path))
+                if expandedFolders.contains(node.path), let children = node.children { add(children) }
+            }
+        }
+        add(folderTree)
+        let i = source.flatMap { rows.firstIndex(of: $0) } ?? 0
+        source = rows[min(max(i + delta, 0), rows.count - 1)]
+    }
 
     func moveFocus(by delta: Int) {
         guard !displayed.isEmpty else { return }

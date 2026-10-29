@@ -79,15 +79,14 @@ struct BrowserView: View {
             if press.characters == "a" { library.selectAll(); return .handled }
             return .ignored
         }
-        let rowStep = library.rowStep
         // Holding an arrow keeps sliding; other keys act once per press.
         let arrows: [KeyEquivalent] = [.leftArrow, .rightArrow, .upArrow, .downArrow]
         if press.phase == .repeat && !arrows.contains(press.key) { return .ignored }
         switch press.key {
         case .leftArrow: library.moveFocus(by: -1); return .handled
         case .rightArrow: library.moveFocus(by: 1); return .handled
-        case .upArrow: library.moveFocus(by: -rowStep); return .handled
-        case .downArrow: library.moveFocus(by: rowStep); return .handled
+        case .upArrow: library.moveSource(by: -1); return .handled
+        case .downArrow: library.moveSource(by: 1); return .handled
         case .space, .return:
             library.viewMode = library.viewMode == .grid && library.previewMode == .normal ? .loupe : .grid
             library.previewMode = .normal

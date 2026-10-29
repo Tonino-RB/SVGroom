@@ -6,25 +6,27 @@ struct SidebarView: View {
 
     var body: some View {
         @Bindable var library = library
-        List(selection: $library.source) {
-            Section("Catalog") {
-                Label("All SVGs", systemImage: "square.grid.2x2")
-                    .badge(library.items.count)
-                    .tag(SidebarSource.all)
-                Label("Missing Files", systemImage: "exclamationmark.triangle")
-                    .badge(library.missingCount)
-                    .foregroundStyle(library.missingCount > 0 ? .primary : .secondary)
-                    .tag(SidebarSource.missing)
-            }
-            Section("Folders") {
-                OutlineGroup(library.folderTree, children: \.children) { node in
-                    FolderRow(node: node)
-                        .tag(SidebarSource.folder(node.path))
+        ScrollViewReader { proxy in
+            List(selection: $library.source) {
+                Section("Catalog") {
+                    Label("All SVGs", systemImage: "square.grid.2x2")
+                        .badge(library.items.count)
+                        .tag(SidebarSource.all)
+                        .id(SidebarSource.all)
+                    Label("Missing Files", systemImage: "exclamationmark.triangle")
+                        .badge(library.missingCount)
+                        .foregroundStyle(library.missingCount > 0 ? .primary : .secondary)
+                        .tag(SidebarSource.missing)
+                        .id(SidebarSource.missing)
+                }
+                Section("Folders") {
+                    FolderRows(nodes: library.folderTree)
                 }
             }
+            .listStyle(.sidebar)
+            .onChange(of: library.source) { if let s = library.source { proxy.scrollTo(s) } }
         }
-        .listStyle(.sidebar)
-        // Arrows always browse the SVGs, never the folder list: catch them before the list does.
+        // Left/right flip the SVGs, up/down step through the sidebar: catch them before the list does.
         .onAppear {
             arrowMonitor = NSEvent.addLocalMonitorForEvents(matching: .keyDown) { event in
                 let key = event.keyCode, plain = event.modifierFlags.isDisjoint(with: [.command, .option, .control])
@@ -33,8 +35,8 @@ struct SidebarView: View {
                     switch key {
                     case 123: library.moveFocus(by: -1)
                     case 124: library.moveFocus(by: 1)
-                    case 126: library.moveFocus(by: -library.rowStep)
-                    case 125: library.moveFocus(by: library.rowStep)
+                    case 126: library.moveSource(by: -1)
+                    case 125: library.moveSource(by: 1)
                     default: return false
                     }
                     return true
@@ -59,6 +61,37 @@ struct SidebarView: View {
             if !folders.isEmpty { library.rescan() }
             return !folders.isEmpty
         }
+    }
+}
+
+/// The folder tree, with its open folders kept in the library so the arrows know which rows are shown.
+private struct FolderRows: View {
+    @Environment(Library.self) private var library
+    let nodes: [FolderNode]
+
+    var body: some View {
+        ForEach(nodes) { node in
+            if let children = node.children, !children.isEmpty {
+                DisclosureGroup(isExpanded: expanded(node.path)) {
+                    FolderRows(nodes: children)
+                } label: {
+                    row(node)
+                }
+            } else {
+                row(node)
+            }
+        }
+    }
+
+    private func row(_ node: FolderNode) -> some View {
+        FolderRow(node: node)
+            .tag(SidebarSource.folder(node.path))
+            .id(SidebarSource.folder(node.path))
+    }
+
+    private func expanded(_ path: String) -> Binding<Bool> {
+        Binding(get: { library.expandedFolders.contains(path) },
+                set: { if $0 { library.expandedFolders.insert(path) } else { library.expandedFolders.remove(path) } })
     }
 }
 
