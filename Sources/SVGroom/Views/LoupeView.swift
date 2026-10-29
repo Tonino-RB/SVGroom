@@ -45,26 +45,7 @@ private struct LoupeContent: View {
                 Text("This SVG could not be rendered.").foregroundStyle(.secondary)
             }
         }
-        .overlay(alignment: .bottom) {
-            HStack(spacing: 10) {
-                Button { library.moveFocus(by: -1) } label: { Image(systemName: "chevron.left") }
-                    .help("Previous (←)")
-                Text(item.name).lineLimit(1).truncationMode(.middle).frame(maxWidth: 280)
-                Button { library.moveFocus(by: 1) } label: { Image(systemName: "chevron.right") }
-                    .help("Next (→)")
-                Divider().frame(height: 14)
-                Button { library.loupeZoom = max(1, library.loupeZoom / 1.5) } label: { Image(systemName: "minus.magnifyingglass") }
-                Text("\(Int((library.loupeZoom * 100).rounded())) %").monospacedDigit().frame(width: 52)
-                Button { library.loupeZoom = min(40, library.loupeZoom * 1.5) } label: { Image(systemName: "plus.magnifyingglass") }
-                Button("Fit") { library.loupeZoom = 1 }.help("Fit (Z toggles zoom)")
-            }
-            .buttonStyle(.borderless)
-            .font(.callout)
-            .padding(.horizontal, 14)
-            .padding(.vertical, 7)
-            .background(.regularMaterial, in: Capsule())
-            .padding(12)
-        }
+        .overlay(alignment: .bottom) { LoupeControls(item: item) }
         .task(id: Key(path: item.path, modified: item.modified, overrides: overrides, missing: item.missing)) {
             guard !item.missing else { image = nil; imagePath = nil; return }
             loading = true
@@ -78,11 +59,42 @@ private struct LoupeContent: View {
     }
 }
 
+/// Previous / next, file name and zoom, floating at the bottom of the loupe.
+struct LoupeControls: View {
+    @Environment(Library.self) private var library
+    let item: SVGItem
+
+    var body: some View {
+        HStack(spacing: 10) {
+            Button { library.moveFocus(by: -1) } label: { Image(systemName: "chevron.left") }
+                .help("Previous (←)")
+            Text(item.name).lineLimit(1).truncationMode(.middle).frame(maxWidth: 280)
+            Button { library.moveFocus(by: 1) } label: { Image(systemName: "chevron.right") }
+                .help("Next (→)")
+            Divider().frame(height: 14)
+            Button { library.loupeZoom = max(1, library.loupeZoom / 1.5) } label: { Image(systemName: "minus.magnifyingglass") }
+            Text("\(Int((library.loupeZoom * 100).rounded())) %").monospacedDigit().frame(width: 52)
+            Button { library.loupeZoom = min(40, library.loupeZoom * 1.5) } label: { Image(systemName: "plus.magnifyingglass") }
+            Button("Fit") { library.loupeZoom = 1 }.help("Fit (Z toggles zoom)")
+        }
+        .buttonStyle(.borderless)
+        .font(.callout)
+        .padding(.horizontal, 14)
+        .padding(.vertical, 7)
+        .background(.regularMaterial, in: Capsule())
+        .padding(12)
+    }
+}
+
 /// Magnifiable scroll view showing the SVG on a white sheet. The image keeps its vector
 /// representation, so it is redrawn sharply at every zoom level.
-private struct PaperView: NSViewRepresentable {
+struct PaperView: NSViewRepresentable {
     let image: NSImage?
     @Binding var zoom: CGFloat
+    /// Sheet size in mm, and the size in mm that fills the view, so two sheets side by side
+    /// are drawn at the same scale. Nil fits the image.
+    var sheetMM: CGSize?
+    var fitMM: CGSize?
 
     func makeCoordinator() -> Coordinator { Coordinator(self) }
 
@@ -103,8 +115,11 @@ private struct PaperView: NSViewRepresentable {
 
     func updateNSView(_ scroll: NSScrollView, context: Context) {
         context.coordinator.parent = self
-        if let doc = scroll.documentView as? PaperDocumentView, doc.image !== image {
+        if let doc = scroll.documentView as? PaperDocumentView,
+           doc.image !== image || doc.sheetMM != sheetMM || doc.fitMM != fitMM {
             doc.image = image
+            doc.sheetMM = sheetMM
+            doc.fitMM = fitMM
             doc.needsDisplay = true
         }
         if abs(scroll.magnification - zoom) > 0.001 {
@@ -135,14 +150,18 @@ private final class FittingScrollView: NSScrollView {
 
 private final class PaperDocumentView: NSView {
     var image: NSImage?
+    var sheetMM: CGSize?
+    var fitMM: CGSize?
 
     override var isFlipped: Bool { true }
 
     override func draw(_ dirtyRect: NSRect) {
         guard let image, image.size.width > 0, image.size.height > 0 else { return }
+        let sheetSize = sheetMM ?? image.size, fitSize = fitMM ?? sheetSize
+        guard fitSize.width > 0, fitSize.height > 0 else { return }
         let area = bounds.insetBy(dx: 28, dy: 28)
-        let s = min(area.width / image.size.width, area.height / image.size.height)
-        let w = image.size.width * s, h = image.size.height * s
+        let s = min(area.width / fitSize.width, area.height / fitSize.height)
+        let w = sheetSize.width * s, h = sheetSize.height * s
         let sheet = NSRect(x: bounds.midX - w / 2, y: bounds.midY - h / 2, width: w, height: h)
 
         NSGraphicsContext.saveGraphicsState()

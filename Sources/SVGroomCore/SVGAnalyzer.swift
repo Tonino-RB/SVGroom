@@ -142,7 +142,7 @@ private final class SAXHandler: NSObject, XMLParserDelegate {
         }
 
         let style = a["style"]
-        let hidden = a["display"] == "none" || style.map { Self.styleValue($0, "display") == "none" } == true
+        let hidden = a["display"] == "none" || style.map { SVGUnits.styleValue($0, "display") == "none" } == true
         let isLayer = name == "g" && layerIndex == nil
             && a.first(where: { $0.key.hasSuffix("groupmode") })?.value == "layer"
         if hidden && !isLayer { skipDepth = 1; return }
@@ -151,7 +151,9 @@ private final class SAXHandler: NSObject, XMLParserDelegate {
         if name == "svg" {
             if !sawRoot {
                 sawRoot = true
-                m = rootTransform(a)
+                let root = SVGUnits.rootTransform(a)
+                widthMM = root.widthMM; heightMM = root.heightMM
+                m = root.transform
             } else {
                 m = m.concatenating(.translate(SVGUnits.user(a["x"]), SVGUnits.user(a["y"])))
             }
@@ -159,7 +161,7 @@ private final class SAXHandler: NSObject, XMLParserDelegate {
         if let t = a["transform"] { m = m.concatenating(TransformParser.parse(t)) }
         ctm.append(m)
 
-        let ownStroke = a["stroke"] ?? style.flatMap { Self.styleValue($0, "stroke") }
+        let ownStroke = a["stroke"] ?? style.flatMap { SVGUnits.styleValue($0, "stroke") }
         let stroke = ownStroke ?? strokeColor.last ?? nil
         strokeColor.append(stroke)
 
@@ -193,26 +195,6 @@ private final class SAXHandler: NSObject, XMLParserDelegate {
         case "path", "line", "polyline", "polygon", "rect", "circle", "ellipse": return true
         default: return false
         }
-    }
-
-    private func rootTransform(_ a: [String: String]) -> Affine {
-        let w = SVGUnits.mm(a["width"]), h = SVGUnits.mm(a["height"])
-        let vb = a["viewBox"].map(NumberScanner.numbers(in:)) ?? []
-        if vb.count == 4, vb[2] > 0, vb[3] > 0 {
-            let pageW = w ?? vb[2] * SVGUnits.mmPerPx
-            let pageH = h ?? vb[3] * SVGUnits.mmPerPx
-            widthMM = pageW; heightMM = pageH
-            let sx = pageW / vb[2], sy = pageH / vb[3]
-            if a["preserveAspectRatio"]?.hasPrefix("none") == true {
-                return Affine.scale(sx, sy).concatenating(.translate(-vb[0], -vb[1]))
-            }
-            // Default xMidYMid meet.
-            let s = min(sx, sy)
-            let tx = (pageW - vb[2] * s) / 2, ty = (pageH - vb[3] * s) / 2
-            return Affine.translate(tx, ty).concatenating(.scale(s, s)).concatenating(.translate(-vb[0], -vb[1]))
-        }
-        widthMM = w; heightMM = h
-        return .scale(SVGUnits.mmPerPx, SVGUnits.mmPerPx)
     }
 
     private func addShape(_ name: String, _ a: [String: String], _ m: Affine, _ acc: StrokeAccumulator) {
@@ -251,16 +233,6 @@ private final class SAXHandler: NSObject, XMLParserDelegate {
         acc.move(m.apply(cx + rx, cy))
         PathWalker.arcCurves(cx, cy, rx, ry, 0, 0, .pi, m, acc)
         PathWalker.arcCurves(cx, cy, rx, ry, 0, .pi, .pi, m, acc)
-    }
-
-    static func styleValue(_ style: String, _ key: String) -> String? {
-        for decl in style.split(separator: ";") {
-            guard let colon = decl.firstIndex(of: ":") else { continue }
-            if decl[..<colon].trimmingCharacters(in: .whitespaces) == key {
-                return decl[decl.index(after: colon)...].trimmingCharacters(in: .whitespaces)
-            }
-        }
-        return nil
     }
 }
 

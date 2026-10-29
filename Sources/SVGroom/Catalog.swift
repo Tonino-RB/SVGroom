@@ -151,3 +151,8 @@ struct Filter: Equatable {
 enum ViewMode: String {
     case grid, loupe
 }
+
+/// Normal browsing, the simulated plot alone, or the original and the simulation side by side.
+enum PreviewMode: String {
+    case normal, simulation, compare
+}

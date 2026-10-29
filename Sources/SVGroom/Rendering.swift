@@ -38,4 +38,16 @@ enum LoupeRenderer {
         }.value
         return data.flatMap(NSImage.init(data:))
     }
+
+    /// The file as it would be plotted with the simulation settings (the file is not modified).
+    static func simulate(_ url: URL, overrides: [Int: Bool], layout: SimulationLayout,
+                         settings: SimulationSettings) async -> NSImage? {
+        let data = await Task.detached(priority: .userInitiated) { () -> Data? in
+            guard let d = try? Data(contentsOf: url),
+                  let simulated = Simulator.render(d, layout: layout, settings: settings) else { return nil }
+            guard LayerEditor.needsEditing(simulated, overrides: overrides) else { return simulated }
+            return LayerEditor.render(simulated, overrides: overrides) ?? simulated
+        }.value
+        return data.flatMap(NSImage.init(data:))
+    }
 }

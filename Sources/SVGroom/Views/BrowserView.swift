@@ -12,8 +12,14 @@ struct BrowserView: View {
         VStack(spacing: 0) {
             FilterBar()
             Divider()
+            if library.previewMode != .normal {
+                SimulationBar()
+                Divider()
+            }
             Group {
-                if library.viewMode == .grid {
+                if library.previewMode != .normal {
+                    SimulationView()
+                } else if library.viewMode == .grid {
                     GridView(thumbSize: thumbSize) { keyFocus = true }
                 } else {
                     LoupeView()
@@ -25,17 +31,28 @@ struct BrowserView: View {
             .onKeyPress(phases: [.down, .repeat], action: handleKey)
             .onAppear { keyFocus = true }
             .onChange(of: library.viewMode) { keyFocus = true }
+            .onChange(of: library.previewMode) { keyFocus = true }
         }
         .toolbar {
             ToolbarItemGroup {
-                Picker("View", selection: $library.viewMode) {
-                    Label("Grid", systemImage: "square.grid.2x2").tag(ViewMode.grid)
-                    Label("Loupe", systemImage: "rectangle").tag(ViewMode.loupe)
+                Picker("Mode", selection: $library.previewMode) {
+                    Label("Normal", systemImage: "photo").tag(PreviewMode.normal)
+                    Label("Simulation", systemImage: "pencil.and.scribble").tag(PreviewMode.simulation)
+                    Label("Compare", systemImage: "rectangle.split.2x1").tag(PreviewMode.compare)
                 }
                 .pickerStyle(.segmented)
-                .help("Grid (G) · Loupe (E or Space)")
+                .help("Normal · Simulation (other sheet, size and pens; the file is not modified) · Compare (original and simulation side by side)")
 
-                if library.viewMode == .grid {
+                if library.previewMode == .normal {
+                    Picker("View", selection: $library.viewMode) {
+                        Label("Grid", systemImage: "square.grid.2x2").tag(ViewMode.grid)
+                        Label("Loupe", systemImage: "rectangle").tag(ViewMode.loupe)
+                    }
+                    .pickerStyle(.segmented)
+                    .help("Grid (G) · Loupe (E or Space)")
+                }
+
+                if library.previewMode == .normal && library.viewMode == .grid {
                     Slider(value: $thumbSize, in: 110...440)
                         .frame(width: 110)
                         .help("Thumbnail size")
@@ -61,7 +78,7 @@ struct BrowserView: View {
             if press.characters == "a" { library.selectAll(); return .handled }
             return .ignored
         }
-        let rowStep = library.viewMode == .grid ? library.gridColumns : 1
+        let rowStep = library.viewMode == .grid && library.previewMode == .normal ? library.gridColumns : 1
         // Holding an arrow keeps sliding; other keys act once per press.
         let arrows: [KeyEquivalent] = [.leftArrow, .rightArrow, .upArrow, .downArrow]
         if press.phase == .repeat && !arrows.contains(press.key) { return .ignored }
@@ -71,10 +88,12 @@ struct BrowserView: View {
         case .upArrow: library.moveFocus(by: -rowStep); return .handled
         case .downArrow: library.moveFocus(by: rowStep); return .handled
         case .space, .return:
-            library.viewMode = library.viewMode == .grid ? .loupe : .grid
+            library.viewMode = library.viewMode == .grid && library.previewMode == .normal ? .loupe : .grid
+            library.previewMode = .normal
             return .handled
         case .escape:
             library.viewMode = .grid
+            library.previewMode = .normal
             return .handled
         case .delete, .deleteForward:
             library.requestTrash(library.targetIDs)
@@ -92,10 +111,10 @@ struct BrowserView: View {
         case "p", "w": library.setFlag(.picked, advance: true)
         case "x": library.setFlag(.rejected, advance: true)
         case "u": library.setFlag(.none, advance: true)
-        case "g": library.viewMode = .grid
-        case "e": library.viewMode = .loupe
+        case "g": library.viewMode = .grid; library.previewMode = .normal
+        case "e": library.viewMode = .loupe; library.previewMode = .normal
         case "z":
-            library.viewMode = .loupe
+            if library.previewMode == .normal { library.viewMode = .loupe }
             library.loupeZoom = library.loupeZoom > 1 ? 1 : 4
         default:
             return .ignored

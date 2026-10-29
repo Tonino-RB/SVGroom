@@ -136,6 +136,35 @@ enum SVGUnits {
         guard let k = mmPerUnit(unit) else { return v }
         return v * k / mmPerPx
     }
+
+    /// Root `<svg>` user units → page millimetres, with the page size when known.
+    static func rootTransform(_ a: [String: String]) -> (transform: Affine, widthMM: Double?, heightMM: Double?) {
+        let w = mm(a["width"]), h = mm(a["height"])
+        let vb = a["viewBox"].map(NumberScanner.numbers(in:)) ?? []
+        if vb.count == 4, vb[2] > 0, vb[3] > 0 {
+            let pageW = w ?? vb[2] * mmPerPx
+            let pageH = h ?? vb[3] * mmPerPx
+            let sx = pageW / vb[2], sy = pageH / vb[3]
+            if a["preserveAspectRatio"]?.hasPrefix("none") == true {
+                return (Affine.scale(sx, sy).concatenating(.translate(-vb[0], -vb[1])), pageW, pageH)
+            }
+            // Default xMidYMid meet.
+            let s = min(sx, sy)
+            let tx = (pageW - vb[2] * s) / 2, ty = (pageH - vb[3] * s) / 2
+            return (Affine.translate(tx, ty).concatenating(.scale(s, s)).concatenating(.translate(-vb[0], -vb[1])), pageW, pageH)
+        }
+        return (.scale(mmPerPx, mmPerPx), w, h)
+    }
+
+    static func styleValue(_ style: String, _ key: String) -> String? {
+        for decl in style.split(separator: ";") {
+            guard let colon = decl.firstIndex(of: ":") else { continue }
+            if decl[..<colon].trimmingCharacters(in: .whitespaces) == key {
+                return decl[decl.index(after: colon)...].trimmingCharacters(in: .whitespaces)
+            }
+        }
+        return nil
+    }
 }
 
 enum TransformParser {

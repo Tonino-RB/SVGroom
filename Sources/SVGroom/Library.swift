@@ -65,6 +65,12 @@ final class Library {
     var loupeZoom: CGFloat = 1
     /// Layer visibility changes for the focused file (preview + stats only, the file is not modified).
     var layerOverrides: [Int: Bool] = [:]
+    var previewMode = PreviewMode.normal
+    /// Sheet, size and pens of the simulation preview, kept between files and launches.
+    var simulation = UserDefaults.standard.data(forKey: "simulation")
+        .flatMap { try? JSONDecoder().decode(SimulationSettings.self, from: $0) } ?? SimulationSettings() {
+        didSet { UserDefaults.standard.set(try? JSONEncoder().encode(simulation), forKey: "simulation") }
+    }
     var autoAdvance = UserDefaults.standard.bool(forKey: "autoAdvance") {
         didSet { UserDefaults.standard.set(autoAdvance, forKey: "autoAdvance") }
     }
