@@ -22,7 +22,7 @@ struct BrowserView: View {
             .focusable()
             .focusEffectDisabled()
             .focused($keyFocus)
-            .onKeyPress(phases: .down, action: handleKey)
+            .onKeyPress(phases: [.down, .repeat], action: handleKey)
             .onAppear { keyFocus = true }
             .onChange(of: library.viewMode) { keyFocus = true }
         }
@@ -62,6 +62,9 @@ struct BrowserView: View {
             return .ignored
         }
         let rowStep = library.viewMode == .grid ? library.gridColumns : 1
+        // Holding an arrow keeps sliding; other keys act once per press.
+        let arrows: [KeyEquivalent] = [.leftArrow, .rightArrow, .upArrow, .downArrow]
+        if press.phase == .repeat && !arrows.contains(press.key) { return .ignored }
         switch press.key {
         case .leftArrow: library.moveFocus(by: -1); return .handled
         case .rightArrow: library.moveFocus(by: 1); return .handled
