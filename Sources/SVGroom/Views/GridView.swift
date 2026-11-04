@@ -17,16 +17,15 @@ struct GridView: View {
                         ForEach(library.displayed) { item in
                             GridCell(item: item, size: thumbSize,
                                      selected: library.selection.contains(item.id),
-                                     focused: library.focusedID == item.id)
+                                     focused: library.focusedID == item.id,
+                                     onMouseDown: { mouseDown(item, $0) },
+                                     onClick: { e in
+                                         // Like Finder: a click inside the selection keeps it until release, so it can be dragged.
+                                         if e.modifierFlags.isDisjoint(with: [.command, .shift]) && library.selection.count > 1 {
+                                             library.focus(item.id)
+                                         }
+                                     })
                                 .id(item.id)
-                                .onTapGesture(count: 2) {
-                                    library.focus(item.id)
-                                    library.viewMode = .loupe
-                                }
-                                .simultaneousGesture(TapGesture().onEnded {
-                                    library.click(item.id, modifiers: NSEvent.modifierFlags)
-                                    onClick()
-                                })
                                 .contextMenu { ItemContextMenu(item: item) }
                         }
                     }
@@ -61,11 +60,28 @@ struct GridView: View {
     }
 }
 
+extension GridView {
+    private func mouseDown(_ item: SVGItem, _ e: NSEvent) {
+        if e.clickCount == 2 {
+            library.focus(item.id)
+            library.viewMode = .loupe
+        } else if !library.selection.contains(item.id) || !e.modifierFlags.isDisjoint(with: [.command, .shift]) {
+            library.click(item.id, modifiers: e.modifierFlags)
+        } else {
+            library.focusedID = item.id
+        }
+        onClick()
+    }
+}
+
 private struct GridCell: View {
+    @Environment(Library.self) private var library
     let item: SVGItem
     let size: Double
     let selected: Bool
     let focused: Bool
+    let onMouseDown: (NSEvent) -> Void
+    let onClick: (NSEvent) -> Void
     @State private var thumb: NSImage?
     @State private var thumbLoaded = false
 
@@ -116,6 +132,11 @@ private struct GridCell: View {
             HStack(spacing: 5) {
                 StarsView(rating: item.rating)
                 LabelDot(label: item.label)
+                SizeBadge(size: item.sizeTag)
+                if !item.keywords.isEmpty {
+                    Image(systemName: "tag").font(.system(size: 9)).foregroundStyle(.secondary)
+                        .help(item.keywords.sorted().joined(separator: ", "))
+                }
                 Spacer(minLength: 0)
                 FlagIcon(flag: item.flag).font(.caption)
             }
@@ -138,6 +159,9 @@ private struct GridCell: View {
             .strokeBorder(focused ? Color.accentColor : .clear, lineWidth: 2))
         .opacity(item.flag == .rejected ? 0.4 : 1)
         .contentShape(Rectangle())
+        .overlay {
+            FileDragArea(image: thumb, onMouseDown: onMouseDown, onClick: onClick) { library.dragURLs(from: item) }
+        }
         .task(id: ThumbKey(path: item.path, modified: item.modified,
                            pixels: Thumbnailer.pixelSize(for: size), loadable: !item.missing && !item.dataless)) {
             guard !item.missing, !item.dataless else { thumb = nil; return }

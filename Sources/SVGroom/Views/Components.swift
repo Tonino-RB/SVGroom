@@ -111,6 +111,52 @@ struct LabelDot: View {
     }
 }
 
+/// XS…XL in a small capsule.
+struct SizeBadge: View {
+    let size: SizeTag
+
+    var body: some View {
+        if size != .none {
+            Text(size.title)
+                .font(.system(size: 9, weight: .bold))
+                .padding(.horizontal, 4)
+                .padding(.vertical, 1)
+                .background(Capsule().strokeBorder(.secondary, lineWidth: 1))
+        }
+    }
+}
+
+/// Size and custom tag menus, acting on the library's targets (also used in the menu bar, outside the environment).
+struct TagMenus: View {
+    let library: Library
+    var act: (() -> Void) -> Void = { $0() }
+
+    var body: some View {
+        Menu("Set Size") {
+            ForEach(SizeTag.allCases.dropFirst(), id: \.self) { s in
+                Button(s.title) { act { library.toggleSize(s) } }
+            }
+            Divider()
+            Button("None") { act { library.applySize(.none) } }
+        }
+        Menu("Tags") {
+            ForEach(library.keywordList, id: \.self) { k in
+                Button {
+                    act { library.toggleKeyword(k) }
+                } label: {
+                    if library.targetItems.contains(where: { $0.keywords.contains(k) }) {
+                        Label(k, systemImage: "checkmark")
+                    } else {
+                        Text(k)
+                    }
+                }
+            }
+            if !library.keywordList.isEmpty { Divider() }
+            Button("Manage Tags…") { library.showsTagManager = true }
+        }
+    }
+}
+
 /// One AxiDraw setting in percent, stored in UserDefaults.
 struct PercentField: View {
     let label: String
@@ -153,6 +199,7 @@ struct ItemContextMenu: View {
                 Button(l.title) { act { library.toggleLabel(l) } }
             }
         }
+        TagMenus(library: library, act: act)
         Divider()
         if item.missing {
             Button("Locate…") { library.locatePanel(item) }
@@ -161,6 +208,7 @@ struct ItemContextMenu: View {
             Button("Reveal in Finder") { act { library.reveal(library.targetItems) } }
             Button("Open in Default App") { act { library.openInDefaultApp(library.targetItems) } }
             OpenWithMenu(url: item.url)
+            Button("Copy to Folder…") { act { library.copyToFolderPanel(library.targetItems) } }
             Divider()
             Button("Move to Trash…") { act { library.requestTrash(library.targetIDs) } }
         }

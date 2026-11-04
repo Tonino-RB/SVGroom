@@ -21,6 +21,7 @@ private struct LoupeContent: View {
     @State private var image: NSImage?
     @State private var imagePath: String?
     @State private var imagePage: CGRect?
+    @State private var imageMM: CGSize?
     @State private var loading = false
     @AppStorage("showOutsidePage") private var showOutside = false
 
@@ -45,7 +46,9 @@ private struct LoupeContent: View {
     var body: some View {
         @Bindable var library = library
         ZStack {
-            PaperView(image: imagePath == item.path ? image : nil, zoom: $library.loupeZoom, page: imagePage)
+            PaperView(image: imagePath == item.path ? image : nil, zoom: $library.loupeZoom,
+                      actualSize: $library.loupeActualSize, imageMM: imageMM, page: imagePage,
+                      dragURLs: { library.dragURLs(from: item) })
             if item.missing {
                 VStack(spacing: 10) {
                     Image(systemName: "questionmark.square.dashed").font(.system(size: 48)).foregroundStyle(.secondary)
@@ -74,6 +77,8 @@ private struct LoupeContent: View {
                 CGRect(x: -$0.minX / $0.width, y: -$0.minY / $0.height,
                        width: (item.analysis?.widthMM ?? 0) / $0.width, height: (item.analysis?.heightMM ?? 0) / $0.height)
             }
+            imageMM = area.map { CGSize(width: $0.width, height: $0.height) }
+                ?? item.analysis.flatMap { a in a.widthMM.flatMap { w in a.heightMM.map { CGSize(width: w, height: $0) } } }
             loading = false
         }
     }
@@ -85,6 +90,7 @@ struct LoupeControls: View {
     let item: SVGItem
     /// Shows the button for drawing outside the page when set.
     var showOutside: Binding<Bool>?
+    @State private var calibrationScreen: NSScreen?
 
     var body: some View {
         HStack(spacing: 10) {
@@ -94,10 +100,16 @@ struct LoupeControls: View {
             Button { library.moveFocus(by: 1) } label: { Image(systemName: "chevron.right") }
                 .help("Next (→)")
             Divider().frame(height: 14)
-            Button { library.loupeZoom = max(1, library.loupeZoom / 1.5) } label: { Image(systemName: "minus.magnifyingglass") }
-            Text("\(Int((library.loupeZoom * 100).rounded())) %").monospacedDigit().frame(width: 52)
-            Button { library.loupeZoom = min(40, library.loupeZoom * 1.5) } label: { Image(systemName: "plus.magnifyingglass") }
-            Button("Fit") { library.loupeZoom = 1 }.help("Fit (Z toggles zoom)")
+            Button { zoom(max(1, library.loupeZoom / 1.5)) } label: { Image(systemName: "minus.magnifyingglass") }
+            Text(library.loupeActualSize ? "1:1" : "\(Int((library.loupeZoom * 100).rounded())) %").monospacedDigit().frame(width: 52)
+            Button { zoom(min(40, library.loupeZoom * 1.5)) } label: { Image(systemName: "plus.magnifyingglass") }
+            Button("Fit") { zoom(1) }.help("Fit (Z toggles zoom)")
+            Button("1:1") { library.loupeActualSize = true }
+                .foregroundStyle(library.loupeActualSize ? Color.accentColor : .primary)
+                .disabled(item.analysis?.widthMM == nil)
+                .help("Real Size — the sheet as large on screen as on paper")
+            Button { calibrationScreen = NSApp.keyWindow?.screen ?? NSScreen.main } label: { Image(systemName: "ruler") }
+                .help("Calibrate Real Size…")
             if let showOutside {
                 Divider().frame(height: 14)
                 Button { showOutside.wrappedValue.toggle() } label: { Image(systemName: "rectangle.dashed") }
@@ -111,6 +123,14 @@ struct LoupeControls: View {
         .padding(.vertical, 7)
         .background(.regularMaterial, in: Capsule())
         .padding(12)
+        .sheet(isPresented: Binding(get: { calibrationScreen != nil }, set: { if !$0 { calibrationScreen = nil } })) {
+            if let calibrationScreen { CalibrationView(screen: calibrationScreen) }
+        }
+    }
+
+    private func zoom(_ z: CGFloat) {
+        library.loupeActualSize = false
+        library.loupeZoom = z
     }
 }
 
@@ -119,16 +139,23 @@ struct LoupeControls: View {
 struct PaperView: NSViewRepresentable {
     let image: NSImage?
     @Binding var zoom: CGFloat
+    @Binding var actualSize: Bool
+    /// Real size of the image in mm when there is no sheet, for the real-size zoom.
+    var imageMM: CGSize?
     /// Sheet size in mm, and the size in mm that fills the view, so two sheets side by side
     /// are drawn at the same scale. Nil fits the image.
     var sheetMM: CGSize?
     var fitMM: CGSize?
     /// Where the page sits in an image that reaches past it (unit coordinates, y down).
     var page: CGRect?
+    /// A click on the sheet that did not become a drag.
+    var onClick: (() -> Void)?
+    /// Files dragged out when the sheet is dragged; nil leaves dragging off.
+    var dragURLs: (() -> [URL])?
 
     func makeCoordinator() -> Coordinator { Coordinator(self) }
 
-    func makeNSView(context: Context) -> NSScrollView {
+    func makeNSView(context: Context) -> FittingScrollView {
         let scroll = FittingScrollView()
         scroll.allowsMagnification = true
         scroll.minMagnification = 1
@@ -138,22 +165,36 @@ struct PaperView: NSViewRepresentable {
         scroll.autohidesScrollers = true
         scroll.drawsBackground = false
         scroll.documentView = PaperDocumentView()
+        let coordinator = context.coordinator
+        scroll.onActualSize = { z in
+            // Not during the SwiftUI update that may have triggered it.
+            DispatchQueue.main.async { if abs(coordinator.parent.zoom - z) > 0.0001 { coordinator.parent.zoom = z } }
+        }
+        scroll.onLeaveActualSize = { coordinator.parent.actualSize = false }
         NotificationCenter.default.addObserver(context.coordinator, selector: #selector(Coordinator.didMagnify(_:)),
                                                name: NSScrollView.didEndLiveMagnifyNotification, object: scroll)
         return scroll
     }
 
-    func updateNSView(_ scroll: NSScrollView, context: Context) {
+    func updateNSView(_ scroll: FittingScrollView, context: Context) {
         context.coordinator.parent = self
+        if let doc = scroll.documentView as? PaperDocumentView {
+            doc.onClick = onClick
+            doc.dragURLs = dragURLs
+        }
         if let doc = scroll.documentView as? PaperDocumentView,
-           doc.image !== image || doc.sheetMM != sheetMM || doc.fitMM != fitMM || doc.page != page {
+           doc.image !== image || doc.sheetMM != sheetMM || doc.fitMM != fitMM || doc.page != page || doc.imageMM != imageMM {
             doc.image = image
             doc.sheetMM = sheetMM
             doc.fitMM = fitMM
             doc.page = page
+            doc.imageMM = imageMM
             doc.needsDisplay = true
         }
-        if abs(scroll.magnification - zoom) > 0.001 {
+        scroll.actualSize = actualSize
+        if actualSize {
+            scroll.applyActualSize()
+        } else if abs(scroll.magnification - zoom) > 0.001 {
             let visible = scroll.contentView.documentVisibleRect
             scroll.setMagnification(zoom, centeredAt: NSPoint(x: visible.midX, y: visible.midY))
         }
@@ -171,15 +212,85 @@ struct PaperView: NSViewRepresentable {
 }
 
 /// Keeps the document exactly as large as the visible area at 100 %, so "fit" is the unzoomed state.
-private final class FittingScrollView: NSScrollView {
+final class FittingScrollView: NSScrollView {
+    /// Holds the magnification at real size on the current screen, through resizing,
+    /// moving to another display and calibrating.
+    var actualSize = false
+    /// The magnification real size took.
+    var onActualSize: ((CGFloat) -> Void)?
+    /// Pinching left real size.
+    var onLeaveActualSize: (() -> Void)?
+
+    override init(frame: NSRect) {
+        super.init(frame: frame)
+        contentView = CenteringClipView()
+        NotificationCenter.default.addObserver(self, selector: #selector(screenChanged),
+                                               name: ScreenCalibration.didChange, object: nil)
+    }
+
+    required init?(coder: NSCoder) { fatalError("init(coder:) has not been implemented") }
+
     override func tile() {
         super.tile()
         let size = contentView.frame.size
         if let doc = documentView, doc.frame.size != size { doc.setFrameSize(size) }
+        applyActualSize()
+    }
+
+    override func viewDidMoveToWindow() {
+        super.viewDidMoveToWindow()
+        NotificationCenter.default.removeObserver(self, name: NSWindow.didChangeScreenNotification, object: nil)
+        if let window {
+            NotificationCenter.default.addObserver(self, selector: #selector(screenChanged),
+                                                   name: NSWindow.didChangeScreenNotification, object: window)
+        }
+        applyActualSize()
+    }
+
+    @objc private func screenChanged() { applyActualSize() }
+
+    func applyActualSize() {
+        guard actualSize else { minMagnification = 1; return }
+        guard let doc = documentView as? PaperDocumentView, let fit = doc.pointsPerMM, let screen = window?.screen else { return }
+        let target = ScreenCalibration.pointsPerMM(screen) / fit
+        // A small sheet on a large screen is smaller at real size than fitted.
+        minMagnification = min(1, target)
+        if abs(magnification - target) > 0.0001 {
+            let visible = contentView.documentVisibleRect
+            setMagnification(target, centeredAt: NSPoint(x: visible.midX, y: visible.midY))
+        }
+        onActualSize?(target)
+    }
+
+    override func magnify(with event: NSEvent) {
+        leaveActualSize()
+        super.magnify(with: event)
+    }
+
+    override func smartMagnify(with event: NSEvent) {
+        leaveActualSize()
+        super.smartMagnify(with: event)
+    }
+
+    private func leaveActualSize() {
+        guard actualSize else { return }
+        actualSize = false
+        onLeaveActualSize?()
     }
 }
 
-final class PaperDocumentView: NSView {
+/// Keeps the document centred when it is smaller than the view (zoomed out below fit).
+private final class CenteringClipView: NSClipView {
+    override func constrainBoundsRect(_ proposedBounds: NSRect) -> NSRect {
+        var r = super.constrainBoundsRect(proposedBounds)
+        guard let doc = documentView else { return r }
+        if r.width > doc.frame.width { r.origin.x = (doc.frame.width - r.width) / 2 }
+        if r.height > doc.frame.height { r.origin.y = (doc.frame.height - r.height) / 2 }
+        return r
+    }
+}
+
+final class PaperDocumentView: NSView, NSDraggingSource {
     /// Drawing outside the page, chosen to stand out from the grey background and the white sheet.
     static let outsideColor = NSColor(srgbRed: 1, green: 0, blue: 0.85, alpha: 1)
 
@@ -187,16 +298,49 @@ final class PaperDocumentView: NSView {
     var sheetMM: CGSize?
     var fitMM: CGSize?
     var page: CGRect?
+    var imageMM: CGSize?
+    var onClick: (() -> Void)?
+    var dragURLs: (() -> [URL])?
+    private var down: NSEvent?
 
     override var isFlipped: Bool { true }
 
-    override func draw(_ dirtyRect: NSRect) {
-        guard let image, image.size.width > 0, image.size.height > 0 else { return }
+    override func mouseDown(with event: NSEvent) { down = event }
+
+    override func mouseDragged(with event: NSEvent) {
+        guard let down, FileDrag.isDrag(from: down, to: event), let dragURLs else { return }
+        self.down = nil
+        FileDrag.begin(dragURLs(), image: nil, event: down, from: self)
+    }
+
+    override func mouseUp(with event: NSEvent) {
+        if down != nil { onClick?() }
+        down = nil
+    }
+
+    func draggingSession(_ session: NSDraggingSession, sourceOperationMaskFor context: NSDraggingContext) -> NSDragOperation {
+        context == .outsideApplication ? .copy : []
+    }
+
+    /// Size of the drawn image at 100 %, nil when there is nothing to draw.
+    private var imageSize: CGSize? {
+        guard let image, image.size.width > 0, image.size.height > 0 else { return nil }
         let sheetSize = sheetMM ?? image.size, fitSize = fitMM ?? sheetSize
-        guard fitSize.width > 0, fitSize.height > 0 else { return }
+        guard fitSize.width > 0, fitSize.height > 0 else { return nil }
         let area = bounds.insetBy(dx: 28, dy: 28)
         let s = min(area.width / fitSize.width, area.height / fitSize.height)
-        let w = sheetSize.width * s, h = sheetSize.height * s
+        return CGSize(width: sheetSize.width * s, height: sheetSize.height * s)
+    }
+
+    /// Points per mm at 100 %, nil when the real size is unknown.
+    var pointsPerMM: CGFloat? {
+        guard let size = imageSize, let mm = sheetMM ?? imageMM, mm.width > 0 else { return nil }
+        return size.width / mm.width
+    }
+
+    override func draw(_ dirtyRect: NSRect) {
+        guard let image, let size = imageSize else { return }
+        let w = size.width, h = size.height
         let full = NSRect(x: bounds.midX - w / 2, y: bounds.midY - h / 2, width: w, height: h)
         let p = page ?? CGRect(x: 0, y: 0, width: 1, height: 1)
         let sheet = NSRect(x: full.minX + p.minX * w, y: full.minY + p.minY * h, width: p.width * w, height: p.height * h)

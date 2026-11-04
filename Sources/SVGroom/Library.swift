@@ -40,6 +40,8 @@ final class Library {
     private(set) var missingRoots: Set<UUID> = []
     /// Folders that share ratings, flags and labels by relative path.
     private(set) var links: [[String]] = []
+    /// Custom tags offered for every file, in list order.
+    private(set) var keywordList: [String] = []
     private(set) var items: [UUID: SVGItem] = [:]
     private(set) var folderTree: [FolderNode] = []
     private(set) var missingCount = 0
@@ -58,14 +60,29 @@ final class Library {
         didSet {
             guard oldValue != focusedID else { return }
             layerOverrides = [:]
+            selectedVersionID = nil
             prioritizeFocused()
         }
     }
     var viewMode = ViewMode.grid
     var loupeZoom: CGFloat = 1
+    /// The loupe shows the sheet at its real size on screen, whatever the window size.
+    var loupeActualSize = false
     /// Layer visibility changes for the focused file (preview + stats only, the file is not modified).
     var layerOverrides: [Int: Bool] = [:]
-    var previewMode = PreviewMode.normal
+    var previewMode = PreviewMode.normal {
+        didSet {
+            selectedVersionID = nil
+            if previewMode == .versions { scheduleAnalysis() }
+        }
+    }
+    /// Versions mode: the version clicked. Commands act on it alone; its linked versions keep their tags.
+    var selectedVersionID: UUID?
+    /// Versions mode shows the sheets through the simulation settings.
+    var versionsSimulated = false
+    var showsSimulationBar: Bool {
+        previewMode == .simulation || previewMode == .compare || (previewMode == .versions && versionsSimulated)
+    }
     /// Sheet, size and pens of the simulation preview, kept between files and launches.
     var simulation = UserDefaults.standard.data(forKey: "simulation")
         .flatMap { try? JSONDecoder().decode(SimulationSettings.self, from: $0) } ?? SimulationSettings() {
@@ -78,6 +95,11 @@ final class Library {
     // MARK: Dialogs
     var pendingTrash: [UUID]?
     var pendingRootRemoval: RootFolder?
+    var pendingTagSync: TagSyncReview?
+    var pendingFolderTrash: FolderTrash?
+    /// Missing files and folders listed after a synchronization, to locate or remove.
+    var showsMissingReview = false
+    var showsTagManager = false
     var alertMessage: String?
 
     @ObservationIgnored var gridColumns = 1
@@ -88,6 +110,7 @@ final class Library {
     @ObservationIgnored private var saveTask: Task<Void, Never>?
     @ObservationIgnored private let saveQueue = DispatchQueue(label: "SVGroom.catalog-save")
     @ObservationIgnored private var rescanRequested = false
+    @ObservationIgnored private var reviewAfterScan = false
     @ObservationIgnored private var lastScan = Date.distantPast
     @ObservationIgnored private var analysisQueue: [UUID] = []
     @ObservationIgnored private var analysisRunning = 0
@@ -116,6 +139,7 @@ final class Library {
 
     /// Items the metadata commands act on: the selection, in display order.
     var targetItems: [SVGItem] {
+        if previewMode == .versions, let v = selectedVersionID.flatMap({ items[$0] }) { return [v] }
         let ids = selection.isEmpty ? Set(focusedID.map { [$0] } ?? []) : selection
         return displayed.filter { ids.contains($0.id) }
     }
@@ -161,9 +185,12 @@ final class Library {
             UserDefaults.standard.set(url.path, forKey: Self.lastCatalogKey)
             roots = file.roots
             links = file.links ?? []
+            keywordList = file.keywords ?? []
             missingRoots = []
             items = Dictionary(file.entries.map { ($0.id, SVGItem($0)) }, uniquingKeysWith: { a, _ in a })
             pathIndex = Dictionary(items.values.map { ($0.path, $0.id) }, uniquingKeysWith: { a, _ in a })
+            let used = Set(items.values.flatMap(\.keywords)).subtracting(keywordList)
+            keywordList += used.sorted { $0.localizedStandardCompare($1) == .orderedAscending }
             analysisFailed = []
             selection = []
             focusedID = nil
@@ -194,7 +221,7 @@ final class Library {
         saveTask?.cancel()
         saveTask = nil
         guard let url = catalogURL else { return }
-        let file = CatalogFile(roots: roots, links: links, entries: items.values.map(\.entry))
+        let file = CatalogFile(roots: roots, links: links, keywords: keywordList, entries: items.values.map(\.entry))
         let work = {
             do {
                 try JSONEncoder().encode(file).write(to: url, options: .atomic)
@@ -239,9 +266,16 @@ final class Library {
 
     func root(at path: String) -> RootFolder? { roots.first { $0.path == path } }
 
+    var missingRootFolders: [RootFolder] { roots.filter { missingRoots.contains($0.id) } }
+
     func confirmRootRemoval() {
         guard let root = pendingRootRemoval else { return }
         pendingRootRemoval = nil
+        removeRoot(root)
+    }
+
+    /// Forgets a root folder and its files; nothing is changed on disk.
+    func removeRoot(_ root: RootFolder) {
         let prefix = root.path + "/"
         for item in items.values where item.path.hasPrefix(prefix) { removeItem(item) }
         roots.removeAll { $0.id == root.id }
@@ -299,14 +333,60 @@ final class Library {
         links.first { $0.contains(path) }?.filter { $0 != path } ?? []
     }
 
+    /// The file in every folder of its link group, in folder order (itself included). Empty when not linked.
+    func versions(of item: SVGItem) -> [LinkedVersion] {
+        for group in links {
+            guard let own = group.first(where: { item.path.hasPrefix($0 + "/") }) else { continue }
+            let relative = item.path.dropFirst(own.count)
+            return group.map { LinkedVersion(folder: $0, item: pathIndex[$0 + relative].flatMap { items[$0] }) }
+        }
+        return []
+    }
+
+    /// Untagged files take the tags of their linked versions; differing tags are left for review.
+    func reviewTagSync(_ folder: String) {
+        guard let group = links.first(where: { $0.contains(folder) }) else { return }
+        let inGroup = items.values.filter { item in group.contains { item.path.hasPrefix($0 + "/") } }
+        let byPath = Dictionary(inGroup.map { ($0.path, $0) }, uniquingKeysWith: { a, _ in a })
+        let sync = FolderLinks.syncTags(in: group, tags: byPath.mapValues(\.tags))
+        guard !sync.copies.isEmpty || !sync.conflicts.isEmpty else {
+            alertMessage = "Tags are already in sync in the linked folders."
+            return
+        }
+        pendingTagSync = TagSyncReview(
+            folders: group,
+            copies: sync.copies.sorted { $0.key < $1.key }.map { (byPath[$0.key]!, $0.value) },
+            conflicts: sync.conflicts.map { paths in
+                paths.map { p in LinkedVersion(folder: group.first { p.hasPrefix($0 + "/") }!, item: byPath[p]) }
+            })
+    }
+
+    /// `choices`: per conflict, the version whose tags the others get (nil leaves them untouched).
+    func applyTagSync(_ review: TagSyncReview, choices: [Int?]) {
+        pendingTagSync = nil
+        var changes = review.copies
+        for (versions, choice) in zip(review.conflicts, choices) {
+            guard let choice, let tags = versions[choice].item?.tags else { continue }
+            changes += versions.indices.filter { $0 != choice }.compactMap { i in versions[i].item.map { ($0, tags) } }
+        }
+        for (item, tags) in changes {
+            item.tags = tags
+            item.makeBookmarkIfNeeded()
+        }
+        markDirty()
+        if filter.isActive || sort == .rating { refreshDisplay() }
+    }
+
     // MARK: - Scanning
 
     func rescanIfStale() {
         if Date().timeIntervalSince(lastScan) > 15 { rescan() }
     }
 
-    func rescan() {
+    /// `review`: list the missing files and folders afterwards, to locate or remove them.
+    func rescan(review: Bool = false) {
         guard catalogURL != nil else { return }
+        if review { reviewAfterScan = true }
         guard !isScanning else { rescanRequested = true; return }
         isScanning = true
         lastScan = Date()
@@ -318,6 +398,9 @@ final class Library {
             if rescanRequested {
                 rescanRequested = false
                 rescan()
+            } else if reviewAfterScan {
+                reviewAfterScan = false
+                if missingCount > 0 || !missingRoots.isEmpty { showsMissingReview = true }
             }
         }
     }
@@ -577,6 +660,8 @@ final class Library {
         }
         if let l = f.label, item.label != l { return false }
         if let fmt = f.format, item.analysis?.format?.name != fmt { return false }
+        if let s = f.sizeTag, item.sizeTag != s { return false }
+        if let k = f.keyword, !item.keywords.contains(k) { return false }
         return true
     }
 
@@ -645,13 +730,62 @@ final class Library {
         applyMetadata(advance: advance) { $0.label = clear ? .none : l }
     }
 
+    /// Same size again removes it.
+    func toggleSize(_ s: SizeTag, advance: Bool = false) {
+        let clear = targetItems.allSatisfy { $0.sizeTag == s }
+        applyMetadata(advance: advance) { $0.sizeTag = clear ? .none : s }
+    }
+
+    func applySize(_ s: SizeTag) { applyMetadata(advance: false) { $0.sizeTag = s } }
+
+    /// Adds the tag to the targets, or removes it when they all have it.
+    func toggleKeyword(_ k: String) {
+        let clear = targetItems.allSatisfy { $0.keywords.contains(k) }
+        applyMetadata(advance: false) { if clear { $0.keywords.remove(k) } else { $0.keywords.insert(k) } }
+    }
+
+    /// Adds a custom tag to the list; returns its name, nil when empty.
+    @discardableResult
+    func addKeyword(_ name: String) -> String? {
+        let k = name.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !k.isEmpty else { return nil }
+        if !keywordList.contains(k) { keywordList.append(k); markDirty() }
+        return k
+    }
+
+    /// Renames a custom tag everywhere; renaming onto an existing tag merges them.
+    func renameKeyword(_ old: String, to name: String) {
+        let new = name.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !new.isEmpty, new != old, let i = keywordList.firstIndex(of: old) else { return }
+        if keywordList.contains(new) { keywordList.remove(at: i) } else { keywordList[i] = new }
+        for item in items.values where item.keywords.remove(old) != nil { item.keywords.insert(new) }
+        if filter.keyword == old { filter.keyword = new }
+        markDirty()
+    }
+
+    /// Removes a custom tag from the list and from every file.
+    func deleteKeyword(_ k: String) {
+        keywordList.removeAll { $0 == k }
+        for item in items.values { item.keywords.remove(k) }
+        if filter.keyword == k { filter.keyword = nil }
+        markDirty()
+    }
+
+    func moveKeywords(from source: IndexSet, to destination: Int) {
+        keywordList.move(fromOffsets: source, toOffset: destination)
+        markDirty()
+    }
+
+    func keywordCount(_ k: String) -> Int { items.values.reduce(0) { $0 + ($1.keywords.contains(k) ? 1 : 0) } }
+
     private func applyMetadata(advance: Bool, _ change: (SVGItem) -> Void) {
         let targets = targetItems
         guard !targets.isEmpty else { return }
-        // The same files in linked folders get the same change.
+        // The same files in linked folders get the same change, except for a version picked in Versions.
         var all = targets
         var ids = Set(targets.map(\.id))
-        for path in targets.flatMap({ FolderLinks.counterparts(of: $0.path, in: links) }) {
+        let linked = previewMode == .versions && selectedVersionID != nil ? [] : links
+        for path in targets.flatMap({ FolderLinks.counterparts(of: $0.path, in: linked) }) {
             if let id = pathIndex[path], ids.insert(id).inserted, let item = items[id] { all.append(item) }
         }
         for item in all {
@@ -661,6 +795,11 @@ final class Library {
         markDirty()
         if advance && autoAdvance && targets.count == 1 { moveFocus(by: 1) }
         if filter.isActive || sort == .rating { refreshDisplay() }
+    }
+
+    /// Versions mode: clicking a version selects it, clicking it again deselects it.
+    func selectVersion(_ id: UUID?) {
+        selectedVersionID = selectedVersionID == id ? nil : id
     }
 
     func isLayerVisible(_ index: Int, in analysis: SVGAnalysis) -> Bool {
@@ -679,6 +818,69 @@ final class Library {
 
     func openInDefaultApp(_ items: [SVGItem]) {
         for item in items where !item.missing { NSWorkspace.shared.open(item.url) }
+    }
+
+    /// Copies the files into one folder, each renamed after its folder so files with the same name don't clash.
+    func copyToFolderPanel(_ items: [SVGItem]) {
+        let sources = items.filter { !$0.missing }.map(\.url)
+        guard !sources.isEmpty else { return }
+        let panel = NSOpenPanel()
+        panel.title = "Copy \(sources.count) SVG\(sources.count == 1 ? "" : "s") to Folder"
+        panel.message = "Each copy is named after its folder (“folder_name.svg”). The originals are not changed."
+        panel.prompt = "Copy"
+        panel.canChooseFiles = false
+        panel.canChooseDirectories = true
+        panel.canCreateDirectories = true
+        guard panel.runModal() == .OK, let dir = panel.url else { return }
+        Task {
+            let (copied, failures) = await Task.detached(priority: .userInitiated) { () -> ([URL], [String]) in
+                let taken = Set((try? FileManager.default.contentsOfDirectory(atPath: dir.path)) ?? [])
+                let names = CopyNames.names(for: sources.map(\.path), taken: taken)
+                var copied: [URL] = [], failures: [String] = []
+                for (source, name) in zip(sources, names) {
+                    let target = dir.appendingPathComponent(name)
+                    do {
+                        try FileManager.default.copyItem(at: source, to: target)
+                        copied.append(target)
+                    } catch {
+                        failures.append(source.lastPathComponent)
+                    }
+                }
+                return (copied, failures)
+            }.value
+            if !copied.isEmpty { NSWorkspace.shared.activateFileViewerSelecting(copied) }
+            if !failures.isEmpty { alertMessage = "Could not copy: \(failures.joined(separator: ", "))" }
+        }
+    }
+
+    /// The files a drag starting on `item` carries: the selection when it includes the item.
+    func dragURLs(from item: SVGItem) -> [URL] {
+        let list = targetItems.contains { $0.id == item.id } ? targetItems : [item]
+        return list.filter { !$0.missing }.map(\.url)
+    }
+
+    func requestFolderTrash(_ path: String) {
+        let prefix = path + "/"
+        pendingFolderTrash = FolderTrash(path: path, svgCount: items.values.filter { $0.path.hasPrefix(prefix) }.count)
+    }
+
+    /// Moves the folder and everything in it to the Trash, and forgets its files.
+    func confirmFolderTrash() {
+        guard let path = pendingFolderTrash?.path else { return }
+        pendingFolderTrash = nil
+        do {
+            try FileManager.default.trashItem(at: URL(fileURLWithPath: path), resultingItemURL: nil)
+        } catch {
+            alertMessage = "Could not move “\((path as NSString).lastPathComponent)” to the Trash: \(error.localizedDescription)"
+            return
+        }
+        if let root = root(at: path) { removeRoot(root); return }
+        let prefix = path + "/"
+        for item in items.values where item.path.hasPrefix(prefix) { removeItem(item) }
+        roots.removeAll { $0.path.hasPrefix(prefix) }
+        links = links.map { $0.filter { $0 != path && !$0.hasPrefix(prefix) } }.filter { $0.count > 1 }
+        if case .folder(let p)? = source, p == path || p.hasPrefix(prefix) { source = .all }
+        catalogChanged()
     }
 
     func requestTrash(_ ids: [UUID]) {
@@ -728,12 +930,17 @@ final class Library {
     private func scheduleAnalysis() {
         var queue: [UUID] = []
         if let f = focused, needsAnalysis(f) { queue.append(f.id) }
+        // Versions mode needs the linked files too, online-only ones included.
+        if previewMode == .versions, let f = focused {
+            queue += versions(of: f).compactMap(\.item).filter { $0.id != f.id && needsAnalysis($0) }.map(\.id)
+        }
         queue += displayed.lazy.filter { !$0.dataless && self.needsAnalysis($0) }.map(\.id)
         analysisQueue = queue
         pumpAnalysis()
     }
 
     private func prioritizeFocused() {
+        if previewMode == .versions { scheduleAnalysis(); return }
         guard let f = focused, needsAnalysis(f) else { return }
         analysisQueue.removeAll { $0 == f.id }
         analysisQueue.insert(f.id, at: 0)

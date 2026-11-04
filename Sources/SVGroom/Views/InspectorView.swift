@@ -10,7 +10,7 @@ struct InspectorView: View {
             VStack(alignment: .leading, spacing: 18) {
                 if targets.count > 1 {
                     MultiInspector(items: targets)
-                } else if let item = library.focused {
+                } else if let item = targets.first ?? library.focused {
                     ItemInspector(item: item)
                 } else {
                     ContentUnavailableView("Nothing Selected", systemImage: "square.dashed")
@@ -52,6 +52,7 @@ private struct Row: View {
 private struct MetadataEditor: View {
     @Environment(Library.self) private var library
     let items: [SVGItem]
+    @State private var newTag = ""
 
     private func common<T: Equatable>(_ k: (SVGItem) -> T) -> T? {
         guard let first = items.first.map(k) else { return nil }
@@ -86,6 +87,59 @@ private struct MetadataEditor: View {
                     .help(l.key.map { "\(l.title) (\($0))" } ?? l.title)
                 }
             }
+            sizes
+            tags
+        }
+    }
+
+    private var sizes: some View {
+        let size = common(\.sizeTag)
+        return HStack(spacing: 6) {
+            ForEach(SizeTag.allCases.dropFirst(), id: \.self) { s in
+                Button { library.toggleSize(s) } label: {
+                    Text(s.title)
+                        .font(.caption.weight(.semibold))
+                        .frame(minWidth: 26)
+                        .padding(.vertical, 3)
+                        .background(Capsule().fill(size == s ? Color.accentColor : Color.primary.opacity(0.08)))
+                        .foregroundStyle(size == s ? Color.white : Color.primary)
+                }
+                .buttonStyle(.plain)
+                .help("Size \(s.title)")
+            }
+        }
+    }
+
+    /// Custom tags: filled when every selected file has it, outlined when some do.
+    private var tags: some View {
+        VStack(alignment: .leading, spacing: 6) {
+            LazyVGrid(columns: [GridItem(.adaptive(minimum: 70), spacing: 6, alignment: .leading)], alignment: .leading, spacing: 6) {
+                ForEach(library.keywordList, id: \.self) { k in
+                    let n = items.filter { $0.keywords.contains(k) }.count
+                    Button { library.toggleKeyword(k) } label: {
+                        Text(k)
+                            .font(.caption)
+                            .lineLimit(1)
+                            .padding(.horizontal, 8)
+                            .padding(.vertical, 3)
+                            .background(Capsule().fill(n == items.count && n > 0 ? Color.accentColor : Color.primary.opacity(0.08)))
+                            .overlay(Capsule().strokeBorder(Color.accentColor, lineWidth: n > 0 && n < items.count ? 1 : 0))
+                            .foregroundStyle(n == items.count && n > 0 ? Color.white : Color.primary)
+                    }
+                    .buttonStyle(.plain)
+                    .help(k)
+                }
+            }
+            HStack {
+                TextField("Add tag", text: $newTag)
+                    .textFieldStyle(.roundedBorder)
+                    .onSubmit {
+                        if let k = library.addKeyword(newTag), !items.allSatisfy({ $0.keywords.contains(k) }) { library.toggleKeyword(k) }
+                        newTag = ""
+                    }
+                Button("Manage…") { library.showsTagManager = true }
+            }
+            .controlSize(.small)
         }
     }
 }
@@ -274,7 +328,11 @@ private struct MultiInspector: View {
         }
         Section(title: "Files") {
             Row(label: "Total size", value: ByteCountFormatter.string(fromByteCount: items.reduce(0) { $0 + $1.fileSize }, countStyle: .file))
-            Button("Reveal in Finder") { library.reveal(items) }.controlSize(.small)
+            HStack {
+                Button("Reveal in Finder") { library.reveal(items) }
+                Button("Copy to Folder…") { library.copyToFolderPanel(items) }
+            }
+            .controlSize(.small)
         }
     }
 }

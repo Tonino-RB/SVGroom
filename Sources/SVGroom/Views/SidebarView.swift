@@ -116,15 +116,22 @@ private struct FolderRow: View {
         .contextMenu {
             if !node.missing {
                 Button("Show in Finder") { NSWorkspace.shared.activateFileViewerSelecting([URL(fileURLWithPath: node.path)]) }
-                Button("Synchronize") { library.rescan() }
+                Button("Synchronize") { library.rescan(review: true) }
             }
             Divider()
             Button("Link With…") { library.linkFolderPanel(node.path) }
-            if !linked.isEmpty { Button("Unlink") { library.unlinkFolder(node.path) } }
+            if !linked.isEmpty {
+                Button("Sync Tags…") { library.reviewTagSync(node.path) }
+                Button("Unlink") { library.unlinkFolder(node.path) }
+            }
             if let root {
                 Divider()
                 Button("Locate Folder…") { library.locateRootPanel(root) }
                 Button("Remove from Catalog…") { library.pendingRootRemoval = root }
+            }
+            if !node.missing {
+                Divider()
+                Button("Move Folder to Trash…") { library.requestFolderTrash(node.path) }
             }
         }
     }

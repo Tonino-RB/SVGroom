@@ -43,6 +43,17 @@ struct ContentView: View {
         } message: {
             Text("Files stay on disk, but their ratings, flags and labels are forgotten.")
         }
+        .confirmationDialog("Move “\(library.pendingFolderTrash.map { ($0.path as NSString).lastPathComponent } ?? "")” to the Trash?",
+                            isPresented: Binding(get: { library.pendingFolderTrash != nil },
+                                                 set: { if !$0 { library.pendingFolderTrash = nil } })) {
+            Button("Move Folder to Trash", role: .destructive) { library.confirmFolderTrash() }
+        } message: {
+            let n = library.pendingFolderTrash?.svgCount ?? 0
+            Text("The whole folder goes to the Trash — all its files, not only the \(n == 1 ? "SVG" : "\(n) SVGs"), and its subfolders. It can be restored from the Trash. Its ratings, flags and tags are removed from the catalog.")
+        }
+        .sheet(item: $library.pendingTagSync) { TagSyncView(review: $0) }
+        .sheet(isPresented: $library.showsMissingReview) { MissingReviewView() }
+        .sheet(isPresented: $library.showsTagManager) { TagManagerView() }
         .alert(library.alertMessage ?? "", isPresented: Binding(get: { library.alertMessage != nil },
                                                                set: { if !$0 { library.alertMessage = nil } })) {
             Button("OK") {}

@@ -12,12 +12,14 @@ struct BrowserView: View {
         VStack(spacing: 0) {
             FilterBar()
             Divider()
-            if library.previewMode != .normal {
+            if library.showsSimulationBar {
                 SimulationBar()
                 Divider()
             }
             Group {
-                if library.previewMode != .normal {
+                if library.previewMode == .versions {
+                    VersionsView()
+                } else if library.previewMode != .normal {
                     SimulationView()
                 } else if library.viewMode == .grid {
                     GridView(thumbSize: thumbSize) { keyFocus = true }
@@ -40,9 +42,16 @@ struct BrowserView: View {
                     Label("Normal", systemImage: "photo").tag(PreviewMode.normal)
                     Label("Simulation", systemImage: "pencil.and.scribble").tag(PreviewMode.simulation)
                     Label("Compare", systemImage: "rectangle.split.2x1").tag(PreviewMode.compare)
+                    Label("Versions", systemImage: "square.stack.3d.up").tag(PreviewMode.versions)
                 }
                 .pickerStyle(.segmented)
-                .help("Normal · Simulation (other sheet, size and pens; the file is not modified) · Compare (original and simulation side by side)")
+                .help("Normal · Simulation (other sheet, size and pens; the file is not modified) · Compare (original and simulation side by side) · Versions (the same file in every linked folder)")
+
+                if library.previewMode == .versions {
+                    Toggle(isOn: $library.versionsSimulated) { Label("Simulate", systemImage: "pencil.and.scribble") }
+                        .toggleStyle(.button)
+                        .help("Show the versions through the simulation settings")
+                }
 
                 if library.previewMode == .normal {
                     Picker("View", selection: $library.viewMode) {
@@ -116,6 +125,7 @@ struct BrowserView: View {
         case "z":
             if library.previewMode == .normal { library.viewMode = .loupe }
             library.loupeZoom = library.loupeZoom > 1 ? 1 : 4
+            library.loupeActualSize = false
         default:
             return .ignored
         }
@@ -180,6 +190,20 @@ private struct FilterBar: View {
                     }
                     .buttonStyle(.plain)
                     .help("Only \(l.title.lowercased()) label")
+                }
+            }
+
+            FilterMenu(title: library.filter.sizeTag?.title ?? "Any Size") {
+                Picker("Size", selection: $library.filter.sizeTag) {
+                    Text("Any Size").tag(SizeTag?.none)
+                    ForEach(SizeTag.allCases.dropFirst(), id: \.self) { Text($0.title).tag(SizeTag?.some($0)) }
+                }
+            }
+
+            FilterMenu(title: library.filter.keyword ?? "Any Tag") {
+                Picker("Tag", selection: $library.filter.keyword) {
+                    Text("Any Tag").tag(String?.none)
+                    ForEach(library.keywordList, id: \.self) { Text($0).tag(String?.some($0)) }
                 }
             }
 

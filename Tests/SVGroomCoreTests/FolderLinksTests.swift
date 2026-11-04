@@ -21,3 +21,17 @@ import Testing
     let groups = FolderLinks.unlink("/x/a", in: [["/x/a", "/x/b"], ["/x/c", "/x/d", "/x/e"]])
     #expect(groups == [["/x/c", "/x/d", "/x/e"]])
 }
+
+@Test func syncTagsCopiesAgreedTagsAndReportsConflicts() {
+    let group = ["/x/a", "/x/b", "/x/c"]
+    let tags: [String: Int?] = [
+        "/x/a/1.svg": 3, "/x/b/1.svg": nil, "/x/c/1.svg": 3,     // agreed → copied to b
+        "/x/a/2.svg": nil, "/x/b/2.svg": nil,                    // nothing to copy
+        "/x/a/s/3.svg": 1, "/x/b/s/3.svg": 2, "/x/c/s/3.svg": nil, // conflict
+        "/x/b/4.svg": 5, "/x/c/4.svg": nil,                      // missing in a
+        "/y/1.svg": 4,                                           // outside the group
+    ]
+    let sync = FolderLinks.syncTags(in: group, tags: tags)
+    #expect(sync.copies == ["/x/b/1.svg": 3, "/x/c/4.svg": 5])
+    #expect(sync.conflicts == [["/x/a/s/3.svg", "/x/b/s/3.svg", "/x/c/s/3.svg"]])
+}

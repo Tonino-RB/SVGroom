@@ -46,7 +46,7 @@ struct AppCommands: Commands {
             Divider()
             Button("Add Folder…") { library.addFolderPanel() }
                 .keyboardShortcut("i", modifiers: [.command, .shift])
-            Button("Synchronize Folders") { library.rescan() }
+            Button("Synchronize Folders") { library.rescan(review: true) }
                 .keyboardShortcut("r")
             Button("Find Missing Files in Folder…") { library.findMissingPanel() }
         }
@@ -67,11 +67,14 @@ struct AppCommands: Commands {
                     Button(l.title) { library.toggleLabel(l) }
                 }
             }
+            TagMenus(library: library)
             Divider()
             Button("Reveal in Finder") { library.reveal(library.targetItems) }
                 .keyboardShortcut("r", modifiers: [.command, .shift])
             Button("Open in Default App") { library.openInDefaultApp(library.targetItems) }
                 .keyboardShortcut("e")
+            Button("Copy to Folder…") { library.copyToFolderPanel(library.targetItems) }
+                .keyboardShortcut("e", modifiers: [.command, .shift])
             Divider()
             Button("Move to Trash…") { library.requestTrash(library.targetIDs) }
                 .keyboardShortcut(.delete, modifiers: .command)

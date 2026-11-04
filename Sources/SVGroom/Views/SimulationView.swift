@@ -81,7 +81,7 @@ private struct SimulationContent: View {
 
 private func mm(_ v: Double) -> String { v.formatted(.number.precision(.fractionLength(0...1))) }
 
-private struct PaneKey: Equatable {
+struct PaneKey: Equatable {
     let path: String
     let modified: Date
     let overrides: [Int: Bool]
@@ -90,7 +90,7 @@ private struct PaneKey: Equatable {
 
 /// One sheet with its caption. Keeps the last image while a new one renders, so changing a
 /// setting doesn't flicker.
-private struct SheetPane: View {
+struct SheetPane: View {
     @Environment(Library.self) private var library
     let title: String
     let detail: String
@@ -98,6 +98,8 @@ private struct SheetPane: View {
     let sheetMM: CGSize
     let fitMM: CGSize
     let key: PaneKey
+    var onClick: (() -> Void)?
+    var dragURLs: (() -> [URL])?
     let load: () async -> NSImage?
     @State private var image: NSImage?
     @State private var loaded = false
@@ -105,7 +107,8 @@ private struct SheetPane: View {
     var body: some View {
         @Bindable var library = library
         ZStack {
-            PaperView(image: image, zoom: $library.loupeZoom, sheetMM: sheetMM, fitMM: fitMM)
+            PaperView(image: image, zoom: $library.loupeZoom, actualSize: $library.loupeActualSize,
+                      sheetMM: sheetMM, fitMM: fitMM, onClick: onClick, dragURLs: dragURLs)
             if !loaded {
                 ProgressView()
             } else if image == nil {

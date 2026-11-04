@@ -28,7 +28,38 @@ public enum FolderLinks {
         return rest + [merged.sorted()]
     }
 
+    /// Syncing the tags of a link group's files (`tags`: path → tag, nil when untagged).
+    /// Files at the same relative path whose tagged versions agree: the untagged ones get that tag.
+    /// Tagged versions that differ: a conflict, left for review.
+    public static func syncTags<Tag: Equatable>(in group: [String], tags: [String: Tag?]) -> TagSync<Tag> {
+        var versions: [Substring: [String]] = [:]
+        for folder in group {
+            for path in tags.keys where path.hasPrefix(folder + "/") {
+                versions[path.dropFirst(folder.count), default: []].append(path)
+            }
+        }
+        var result = TagSync<Tag>()
+        for relative in versions.keys.sorted() {
+            let paths = versions[relative]!
+            var distinct: [Tag] = []
+            for p in paths { if let t = tags[p] ?? nil, !distinct.contains(t) { distinct.append(t) } }
+            if distinct.count > 1 {
+                result.conflicts.append(paths)
+            } else if let t = distinct.first {
+                for p in paths where tags[p]! == nil { result.copies[p] = t }
+            }
+        }
+        return result
+    }
+
     public static func unlink(_ folder: String, in groups: [[String]]) -> [[String]] {
         groups.map { $0.filter { $0 != folder } }.filter { $0.count > 1 }
     }
+}
+
+public struct TagSync<Tag: Equatable> {
+    /// Untagged files and the tag they get.
+    public var copies: [String: Tag] = [:]
+    /// The versions of each file whose tags differ, in folder order.
+    public var conflicts: [[String]] = []
 }
