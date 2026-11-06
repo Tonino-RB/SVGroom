@@ -50,3 +50,15 @@ swift scripts/make-icon.swift  # redraws Resources/AppIcon.icns
 Build products go to `~/Library/Caches/SVGroom-build` so OneDrive doesn't sync them. `open Package.swift` opens the project in Xcode.
 
 Sources and licensing: see [Bibliographie.md](Bibliographie.md).
+
+## Download
+
+A ready-built app (Apple silicon, macOS 14+) is attached to each [release](https://github.com/Tonino-RB/SVGroom/releases). It is not notarised: the first time, right-click the app › Open, or run `xattr -dr com.apple.quarantine SVGroom.app`.
+
+## Other systems
+
+The app is macOS-only: its interface uses SwiftUI and AppKit. `Sources/SVGroomCore` (SVG analysis, plot time, paper formats, simulation) is plain Swift with Foundation (plus CryptoKit, which swift-crypto replaces off Apple platforms) and is the part to start from for a port to Linux or Windows.
+
+## License
+
+[PolyForm Noncommercial 1.0.0](LICENSE): free to use, study, modify and share for any noncommercial purpose (personal use, hobby, research, education, nonprofits). Commercial use, including selling the app or a version of it, is not permitted without a separate licence from the author.

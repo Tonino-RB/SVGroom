@@ -4,3 +4,6 @@ Process/
 .DS_Store
 *.xcodeproj/xcuserdata/
 .swiftpm/
+CLAUDE.md
+.claude/
+*.zip

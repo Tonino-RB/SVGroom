@@ -41,7 +41,7 @@ Everything SVGroom draws on: concepts, specifications, frameworks. There is **no
 
 **Score: 2 — Ok with credits.**
 
-- Code and app icon: written / drawn for this project; only Apple system frameworks, used as intended under the Xcode / Apple Developer agreements. No open-source dependency, so no licence obligations.
+- Code and app icon: written / drawn for this project; only Apple system frameworks, used as intended under the Xcode / Apple Developer agreements. No open-source dependency, so no licence obligations. Published under PolyForm Noncommercial 1.0.0 (https://polyformproject.org/licenses/noncommercial/1.0.0): others may not use it commercially; the author keeps every right, including selling it or licensing it under other terms.
 - Specifications (W3C, ISO) are implemented, not copied; implementing them is free.
 - Plot-time model: the AxiDraw software is GPL-2.0. SVGroom copies none of its code; it uses its published default constants (facts) and reproduces its timing behaviour in its own Swift code, written after reading the AxiDraw planner and measuring its preview estimates. Reimplementing behaviour is generally allowed, but because the planner was read rather than designed clean-room, credit Evil Mad Scientist (see Credits). For a stricter guarantee, have the model reviewed or rewritten clean-room from the measurements alone. "AxiDraw" is a trademark of Evil Mad Scientist; it is only used to say which settings the app expects.
 - Lightroom, Inkscape, AxiDraw and vpype are cited as *inspiration only*; no code, assets or trade dress are reused. Don't use "Lightroom" in the product name or marketing.
