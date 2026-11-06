@@ -714,7 +714,18 @@ final class Library {
     func moveFocus(by delta: Int) {
         guard !displayed.isEmpty else { return }
         let i = focusedID.flatMap { displayIndex[$0] } ?? -1
-        focus(displayed[min(max(i + delta, 0), displayed.count - 1)].id)
+        guard previewMode == .versions, !links.isEmpty else {
+            focus(displayed[min(max(i + delta, 0), displayed.count - 1)].id)
+            return
+        }
+        // Versions mode shows all the versions of a file at once: each file is visited once,
+        // at the place of its first version in the list.
+        let firsts = FolderLinks.firstVersions(displayed.map(\.path), in: links)
+        let current = focused.map { f in
+            versions(of: f).compactMap { $0.item.flatMap { displayIndex[$0.id] } }.min() ?? i
+        } ?? -1
+        let pos = firsts.firstIndex(of: current) ?? (delta > 0 ? -1 : firsts.count)
+        focus(displayed[firsts[min(max(pos + delta, 0), firsts.count - 1)]].id)
     }
 
     func selectAll() { selection = Set(displayed.map(\.id)) }

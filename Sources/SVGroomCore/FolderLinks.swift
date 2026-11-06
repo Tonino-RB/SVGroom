@@ -15,6 +15,20 @@ public enum FolderLinks {
         return result
     }
 
+    /// The indices of `paths` that are not a version of an earlier one (same relative path in the same link group).
+    public static func firstVersions(_ paths: [String], in groups: [[String]]) -> [Int] {
+        var seen = Set<String>()
+        return paths.indices.filter { i in
+            let path = paths[i]
+            for (g, group) in groups.enumerated() {
+                if let folder = group.first(where: { path.hasPrefix($0 + "/") }) {
+                    return seen.insert("\(g)\u{0}\(path.dropFirst(folder.count))").inserted
+                }
+            }
+            return true
+        }
+    }
+
     /// Links `folder` with `others`, merging the groups they already belong to.
     /// The folder itself and folders nested in or around it are ignored.
     public static func link(_ folder: String, with others: [String], in groups: [[String]]) -> [[String]] {

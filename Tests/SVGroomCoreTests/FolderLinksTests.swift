@@ -35,3 +35,10 @@ import Testing
     #expect(sync.copies == ["/x/b/1.svg": 3, "/x/c/4.svg": 5])
     #expect(sync.conflicts == [["/x/a/s/3.svg", "/x/b/s/3.svg", "/x/c/s/3.svg"]])
 }
+
+@Test func firstVersionsKeepsOneFilePerRelativePath() {
+    let groups = [["/x/a", "/x/b"]]
+    let paths = ["/x/a/1.svg", "/x/b/1.svg", "/x/b/2.svg", "/x/a/s/3.svg", "/x/a/2.svg", "/x/b/s/3.svg", "/y/1.svg", "/x/c/1.svg"]
+    #expect(FolderLinks.firstVersions(paths, in: groups) == [0, 2, 3, 6, 7])
+    #expect(FolderLinks.firstVersions(paths, in: []) == Array(paths.indices))
+}

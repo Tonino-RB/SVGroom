@@ -27,6 +27,10 @@ struct SVGroomApp: App {
 final class AppDelegate: NSObject, NSApplicationDelegate {
     var library: Library?
 
+    func applicationDidFinishLaunching(_ notification: Notification) {
+        try? FileManager.default.removeItem(at: FileDrag.folder)
+    }
+
     func applicationShouldTerminateAfterLastWindowClosed(_ sender: NSApplication) -> Bool { true }
 
     func applicationWillTerminate(_ notification: Notification) {

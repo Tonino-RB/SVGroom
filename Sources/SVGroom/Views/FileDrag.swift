@@ -1,11 +1,17 @@
 import AppKit
+import SVGroomCore
 import SwiftUI
 
-/// Dragging SVG files out of the app (Finder, other apps): they receive copies of the files.
+/// Dragging SVG files out of the app (Finder, other apps): they receive copies of the files,
+/// named after their folders like “Copy to Folder” does, so many “01Front.svg” don't clash.
 enum FileDrag {
+    /// Where the renamed copies for drags are made. Emptied when the app launches.
+    static let folder = FileManager.default.temporaryDirectory.appendingPathComponent("SVGroom Drags")
+
     /// Starts dragging `urls` from `view`, one preview per file, slightly fanned out under the pointer.
     static func begin(_ urls: [URL], image: NSImage?, event: NSEvent, from view: NSView & NSDraggingSource) {
         guard !urls.isEmpty else { return }
+        let urls = renamedCopies(urls)
         let p = view.convert(event.locationInWindow, from: nil)
         let side = 72.0
         let items = urls.enumerated().map { i, url -> NSDraggingItem in
@@ -18,6 +24,23 @@ enum FileDrag {
         }
         let session = view.beginDraggingSession(with: items, event: event, source: view)
         session.draggingFormation = .pile
+    }
+
+    /// Copies of `urls` in a new temporary folder, named with `CopyNames` (“coral_01Front.svg”).
+    /// The originals when copying fails.
+    private static func renamedCopies(_ urls: [URL]) -> [URL] {
+        let dir = folder.appendingPathComponent(UUID().uuidString)
+        let names = CopyNames.names(for: urls.map(\.path))
+        do {
+            try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+            return try zip(urls, names).map { url, name in
+                let copy = dir.appendingPathComponent(name)
+                try FileManager.default.copyItem(at: url, to: copy)
+                return copy
+            }
+        } catch {
+            return urls
+        }
     }
 
     /// Pointer travel before a press becomes a drag.
